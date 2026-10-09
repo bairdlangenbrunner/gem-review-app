@@ -1,0 +1,47 @@
+/* GOGPT page extension styles, loaded after review_core/web/style.css. Everything here is GOGPT only: the plants / checklist pane switch, checklist rows, the close-out panel, the ask-the-PM box, IRP, checklist-group and watch chips, and the nested unit rows of a new plant. */
+/* the pane switch above the queue: plants or checklist */
+.pane-mode { margin: 0; padding: 4px 10px 0; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.pane-mode button { font-size: 14px; }
+/* checklist mode: one row per group of the QC/Country checklist */
+.pipes li.grp .pname { display: flex; align-items: baseline; gap: 6px; }
+.pipes li.grp.done .pname { color: var(--accept); }
+.pipes li.grp .grows { display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 4px; font-size: 12.5px; color: var(--muted); }
+.pipes li.grp .grow-row { white-space: nowrap; border: 1px solid var(--line); border-radius: 8px; padding: 0 6px; }
+.pipes li.grp .grow-row.done { color: var(--accept); border-color: transparent; }
+.pipes li.grp .grow-row .n { margin-left: 2px; }
+/* the ask-the-PM count on a plant or a group */
+.pipes .pm, .chip.pm { display: inline-block; font-size: 12px; line-height: 1.5; padding: 0 7px; border-radius: 9px; white-space: nowrap;
+  background: var(--hold); color: #fff; font-weight: 600; border: 0; vertical-align: middle; }
+/* table cells keep the line breaks of Status Detail and Notes text */
+table.pair td { white-space: pre-wrap; }
+/* close-out panel (checklist group 9): sums up the review for the end-of-state checklist rows */
+.closeout { max-width: 880px; font-size: 14.5px; line-height: 1.5; }
+.closeout .cohead p { margin: 6px 0 0; }
+.closeout section { margin-top: 22px; padding-top: 12px; border-top: 2px solid var(--line); }
+.closeout h3 { margin: 0 0 6px; font-size: 16px; }
+.closeout .rown { font-weight: 400; font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 10px; padding: 0 7px; margin-left: 4px; vertical-align: middle; cursor: default; }
+.closeout ul { margin: 6px 0; padding-left: 22px; }
+.closeout li { margin: 3px 0; }
+.closeout .colist { margin: 8px 0; }
+.closeout .colist summary { cursor: pointer; font-weight: 600; }
+.closeout .colist p { margin: 2px 0 4px; font-size: 13px; }
+.closeout blockquote.draft { margin: 8px 0; padding: 10px 14px; border-left: 3px solid var(--line); background: var(--bg); white-space: pre-wrap; }
+.closeout .muted { color: var(--muted); }
+.closeout .n { color: var(--muted); font-size: 13px; }
+/* a new plant: its unit rows nested under the plant row */
+.line .row1.newunit { margin-top: 12px; }
+.line .row1.newunit .col { font-size: 14px; }
+/* the ask-the-PM box on a line, an item and the plant header */
+.pmbox { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); cursor: pointer; white-space: nowrap; margin-left: 6px; }
+.pmbox input { margin: 0; }
+.pmbox.on { color: var(--hold); font-weight: 600; }
+.line .controls .dnote { flex: 1 1 16em; min-width: 12em; font-size: 13px; }   /* optional note on any call, saved to the log with it */
+.card .ctx .pmplant { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.card .ctx .pmplant .pmnote { min-width: 18em; }
+/* watch items: a left bar tells the two kinds apart */
+.chip.watch { color: var(--accent); border-color: var(--accent); }
+.chip.irp { color: var(--accent); border-color: var(--accent); border-style: double; cursor: help; }
+.chip.irp.todo { background: var(--t-medium); color: var(--t-medium-ink); border-color: transparent; font-weight: 600; }
+.chip.grp { border-style: dashed; cursor: help; }
+.item.watch-new_to_tracker { border-left: 4px solid var(--t-new-ink); }
+.item.watch-existing_plant { border-left: 4px solid var(--accent); }

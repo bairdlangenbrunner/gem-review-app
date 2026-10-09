@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{title}}</title>
+<link rel="stylesheet" href="/core/style.css">
+<link rel="stylesheet" href="/tracker/ext.css">
+</head>
+<body>
+<header class="top">
+  <h1>{{title}}</h1>
+  <span id="scope" class="scope"></span>
+  <div class="who"><span id="whoami"></span>
+    <span class="slot" data-slot="header-buttons"></span>
+    <select id="theme-pick" aria-label="color theme">
+      <option value="">default</option><option value="solarized">solarized</option><option value="nord">nord</option>
+      <option value="gruvbox">gruvbox</option><option value="dracula">dracula</option><option value="sepia">sepia</option>
+    </select>
+    <button id="theme" class="ghost" aria-label="toggle light / dark">&#9680;</button>
+    <button id="export-btn" class="ghost" aria-label="download decisions" hidden>download decisions</button>
+    <button id="progress-btn" class="ghost" aria-label="progress">progress</button>
+    <button id="info-btn" class="ghost" aria-label="how this works">how to</button>
+    <button id="help-btn" class="ghost" aria-label="keyboard shortcuts">?</button>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+<div id="toast" class="toast" role="status" hidden></div>
+
+<section id="tab-queue" class="tabpanel">
+  <form id="filters" class="filters" onsubmit="return false">
+    <div class="row2">
+      <span class="slot" data-slot="filters"></span>
+      <label>decision <select id="f-decision"></select></label>
+      <label>kind <select id="f-kind"></select></label>
+      <label>confidence <select id="f-tier"></select></label>
+      <label class="grow">search <input type="search" id="f-q" placeholder="name / id"></label>
+      <button type="button" id="f-more" class="ghost" aria-expanded="false" aria-controls="more-filters">more filters</button>
+      <button type="button" id="f-reset" class="ghost">reset</button>
+    </div>
+    <div id="more-filters" class="more-filters" hidden>
+      <label>column <select id="f-column"><option value="">any</option></select></label>
+      <label>batch <select id="f-dir"><option value="">any</option></select></label>
+      <label>decided by <select id="f-by"><option value="">anyone</option></select></label>
+      <span class="slot" data-slot="filters-more"></span>
+    </div>
+    <div id="active-filters" class="active-filters" hidden></div>
+  </form>
+  <div class="queue">
+    <div class="pane">
+      <span class="slot" data-slot="queue-pane"></span>
+      <ol id="pipes" class="pipes" aria-label="cards"></ol>
+    </div>
+    <article id="card" class="card" aria-live="polite"></article>
+  </div>
+</section>
+
+<span class="slot" data-slot="card-extra"></span>
+<dialog id="dialog"></dialog>
+
+<script src="/core/app.js"></script>
+<script src="/tracker/ext.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+/* pipelines page extension styles, loaded after review_core/web/style.css. */
+/* a concern's rival candidate under the proposal (review_data._attach_rivals) */
+table.pair tr.rival td { border-top: 0; padding-top: 0; }
+table.pair tr.rival td.f { font-size: 12px; color: var(--muted, inherit); }
+table.pair .newv.c-rival { background: var(--t-cont); color: var(--t-cont-ink); font-weight: 600; }
+table.pair tr.rival.done .newv.c-rival { opacity: .5; text-decoration: line-through; }
+.tag-rival { color: var(--t-cont-ink); }
+.line .controls .b-candidate { color: var(--t-cont-ink); border-color: var(--t-cont-ink); }
+.line .controls .b-candidate[aria-pressed="true"] { background: var(--t-cont); }
+/* Google page (gas.js): the scope picker and the route sketch dialog */
+#scope-pick { margin-right: 6px; }
+dialog[data-kind="geo"] { max-width: 600px; }
+dialog[data-kind="geo"] svg { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 6px; color: var(--accent); }
+dialog[data-kind="geo"] pre { max-height: 180px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+/* fuel: its own tint (amber) so it reads apart from the blue country control */
+.fdrop summary, .scope .fbox { background: color-mix(in srgb, #d98a00 18%, var(--panel)); border-color: #d98a00; color: var(--ink); }
+.fdrop summary:hover { border-color: #d98a00; }
