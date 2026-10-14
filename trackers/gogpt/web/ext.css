@@ -45,3 +45,5 @@ table.pair td { white-space: pre-wrap; }
 .chip.grp { border-style: dashed; cursor: help; }
 .item.watch-new_to_tracker { border-left: 4px solid var(--t-new-ink); }
 .item.watch-existing_plant { border-left: 4px solid var(--accent); }
+/* the header line: what the page covers, as plain text so it does not read as a button */
+.scope .where { color: var(--ink); }

@@ -395,11 +395,21 @@
     var t = p.items.length;
     return p._ni < t ? p._ni + " of " + t + " items" : t + " item" + (t === 1 ? "" : "s");
   }
+  // a card is done when it has decidable lines and none is left to decide (items do not count); "hide done" drops it from the left pane (the open card stays so it does not vanish under the reviewer)
+  function cardDone(p) {
+    return p.lines.length > 0 && p.lines.every(function (o) { return dstate(o) !== "undecided"; });
+  }
+  // "hide with items" drops every card that carries items to call (information-only items do not count)
+  function cardHasItems(p) {
+    return (p.items || []).some(function (it) { return !INFO_KINDS[it.kind]; });
+  }
   function renderQueue() {
     if (T.renderQueue && T.renderQueue()) return;     // the tracker drew the pane itself (GOGPT checklist view)
     var h = [], all = cards();
     S.visible.forEach(function (i) {
       var p = all[i];
+      if (S.hideDone && cardDone(p) && i !== S.pipe) return;
+      if (S.hideItems && cardHasItems(p) && i !== S.pipe) return;
       var dots = {};
       p.lines.forEach(function (l) { dots[tierOf(l)] = 1; });
       var dd = ["high", "medium", "low"].filter(function (t) { return dots[t]; })
@@ -423,6 +433,7 @@
     S.line = lineIdx == null ? -1 : lineIdx;
     // a link straight to a line: open the tab that holds it
     if (S.line >= 0 && LINES[S.line] && S.tab !== sevOf(LINES[S.line])) S.tab = sevOf(LINES[S.line]);
+    if (S.hideDone || S.hideItems) renderQueue();     // the card just left can drop out of the list now that it is no longer open
     var prev = $("pipes").querySelector("li.sel");
     if (prev) prev.classList.remove("sel");
     var li = $("pipes").querySelector('li[data-i="' + i + '"]');
@@ -490,13 +501,18 @@
     return '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(shortUrl(u)) + "</a>";
   }
   function tag(t) { return t ? '<span class="tag tag-' + t + '">' + t + "</span>" : ""; }
+  // a small button that copies `text` (a proposed value or link) to the clipboard; onCardClick handles it
+  function copyBtn(text) {
+    if (blankv(text)) return "";
+    return ' <button type="button" class="copybtn" data-clip="' + esc(text) + '" aria-label="copy"' + tipAttrs("copy to clipboard") + ">⧉</button>";
+  }
   // one value row: field | now | proposed | tag
   function valueRow(c, was, now, reverified) {
     var wasH = blankv(was) ? "" : "<span>" + esc(was) + "</span>";
     var nowH, t = "", same = false;
     if (!blankv(was) && String(was).trim() === String(now).trim()) { nowH = wasH; same = true; t = reverified ? "re-verified" : ""; }
     else if (blankv(now)) { nowH = '<span class="blank">(clear)</span>'; t = "clear"; }
-    else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + t + '">' + esc(now) + "</span>"; }
+    else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + t + '">' + esc(now) + "</span>" + copyBtn(now); }
     return '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";
   }
   function valueRows(l) {
@@ -519,7 +535,7 @@
     else {
       t = !curr.length ? "fill" : (added.length ? "add" : "");
       propH = "<ul>" + curr.map(function (u) { return '<li class="kept">' + shortLink(u) + "</li>"; }).join("") +
-        added.map(function (u) { return '<li><span class="newref c-fill">' + shortLink(u) + "</span> " + vmark(u, l) + "</li>"; }).join("") + "</ul>";
+        added.map(function (u) { return '<li><span class="newref c-fill">' + shortLink(u) + "</span>" + copyBtn(u) + " " + vmark(u, l) + "</li>"; }).join("") + "</ul>";
     }
     return '<tr class="ref"><td class="f">' + esc(col) + "</td><td>" + nowH + "</td><td>" + propH + '</td><td class="t">' + tag(t) + "</td></tr>";
   }
@@ -1100,6 +1116,8 @@
   function onCardClick(e) {
     var pidEl = e.target.closest(".pid");
     if (pidEl) { copyText(pidEl.textContent, pidEl.textContent + " copied"); return; }
+    var clip = e.target.closest("button[data-clip]");
+    if (clip) { var ct = clip.getAttribute("data-clip"); copyText(ct, (ct.length > 60 ? ct.slice(0, 59) + "…" : ct) + " copied"); return; }
     if (T.onCardClick && T.onCardClick(e)) return;      // the tracker's own buttons and boxes
     if (e.target.closest(".dnote")) { var nl = e.target.closest(".line"); if (nl) setLine(+nl.getAttribute("data-i"), true); return; }
     if (e.target.closest("[data-showall]")) {
@@ -1316,12 +1334,12 @@
       if (synced && Store.requestPush && !$("ledger-btn")) {
         var pb = document.createElement("button");
         pb.id = "ledger-btn"; pb.type = "button"; pb.className = "ghost"; pb.textContent = "push to log";
-        pb.dataset.tip = "save your calls and ask Claude to add them to the log; nothing is written to the tracker";
+        pb.dataset.tip = "ask Claude to add your calls that are not in the log yet; calls already logged or already pushed are left out. Nothing is written to the tracker";
         var ledgerUrl = (window.REVIEW_STATIC || {}).ledger_url;
         if (ledgerUrl) { pb.dataset.tipHref = ledgerUrl; pb.dataset.tipHrefLabel = "open the log ↗"; }
         pb.onclick = function () {
           Promise.resolve(Store.requestPush()).then(function (r) {
-            toast("push to log requested: " + r.count + " call" + (r.count === 1 ? "" : "s") + " saved");
+            toast("push to log requested: " + r.count + " new call" + (r.count === 1 ? "" : "s") + " not yet in the log");
           }, function (e) { toast(e && e.message ? e.message : "the request did not go through"); });
         };
         ex.parentNode.insertBefore(pb, ex.nextSibling);
@@ -1451,6 +1469,16 @@
     });
     document.addEventListener("click", closeDrops);
     $("card").addEventListener("click", onCardClick);
+    [["hide-done", "hideDone", "review-hide-done"], ["hide-items", "hideItems", "review-hide-items"]].forEach(function (c) {
+      var box = $(c[0]);
+      try { S[c[1]] = localStorage.getItem(c[2]) === "1"; } catch (e) { S[c[1]] = false; }
+      box.checked = !!S[c[1]];
+      box.addEventListener("change", function () {
+        S[c[1]] = box.checked;
+        try { localStorage.setItem(c[2], S[c[1]] ? "1" : "0"); } catch (e) { /* ignore */ }
+        renderQueue();
+      });
+    });
     $("pipes").addEventListener("click", function (e) {
       var li = e.target.closest("li[data-i]");
       if (li) return selectPipe(+li.getAttribute("data-i"));
@@ -1529,7 +1557,7 @@
     get KIND_LABEL() { return KIND_LABEL; }, get CALL_LABEL() { return CALL_LABEL; }, get SEV_LABEL() { return SEV_LABEL; },
     NOT_YET: NOT_YET, cards: cards,
     $: $, esc: esc, chip: chip, tipAttrs: tipAttrs, urlLink: urlLink, asList: asList, vmark: vmark, shortLink: shortLink, shortUrl: shortUrl,
-    tag: tag, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, tierChip: tierChip, sevChip: sevChip,
+    tag: tag, copyBtn: copyBtn, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, tierChip: tierChip, sevChip: sevChip,
     tierSummary: tierSummary, cur: cur, tierOf: tierOf, sevOf: sevOf, dstate: dstate, blankv: blankv, dirLabel: dirLabel, timeOf: timeOf, et: et,
     toast: toast, banner: banner, copyText: copyText, refilter: refilter, changed: changed, renderQueue: renderQueue, renderCard: renderCard,
     renderActive: renderActive, syncControls: syncControls, setLine: setLine, selectPipe: selectPipe, writeRoute: writeRoute, applyRoute: applyRoute,

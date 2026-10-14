@@ -1,4 +1,4 @@
-/* GOGPT extension for the shared review app (gem-review-app). Loads after review_core/web/app.js and registers everything GOGPT-only through ReviewApp.define: the checklist groups and the checklist pane, country and state filters, the ask-the-PM flag, units on a plant, new rows, the IRP chip, watch items and the close-out panel. */
+/* GOGPT extension for the shared review app (gem-review-app). Loads after review_core/web/app.js and registers everything GOGPT-only through ReviewApp.define: the checklist groups and the checklist pane, the where filter (country and state), the ask-the-PM flag, units on a plant, new rows, the IRP chip, watch items and the close-out panel. */
 (function () {
   "use strict";
   if (!window.ReviewApp || !window.ReviewApp.define) return;
@@ -6,7 +6,6 @@
 
   window.ReviewApp.define(function (A) {
     var $ = A.$, esc = A.esc, chip = A.chip, tipAttrs = A.tipAttrs, blankv = A.blankv, cur = A.cur, S = A.S;
-    var NO_STATE = "(none)";   // FS.state sentinel: every box unticked, so nothing matches (empty = no filter)
     var ROW_LABEL = {};        // checklist row number -> its label (from the dataset's groups)
     var VIEW = "plants";       // the left pane: "plants" (the queue) or "checklist" (the QC/Country checklist groups)
     var closeoutCopy = {};     // the close-out panel's copy buttons: units, draft
@@ -75,73 +74,64 @@
     function lineUnit(l) { return l.kind === "plant" || l.kind === "new_row" ? "" : (l.gem_unit_id || ""); }
     function plural(n, w) { return n + " " + w + (n === 1 ? "" : "s"); }
 
-    // ---- country and state filters ----
-    function allStates() { return (D().scope && D().scope.states) || []; }
-    // the states of the picked country; every batch state while no country is picked
-    function states() {
-      if (!FS().country) return allStates();
-      return allStates().filter(function (k) { return plants().some(function (p) { return p.state === k && p.country === FS().country; }); });
-    }
+    // ---- where: the one location filter (country and state) ----
     function countries() { return A.uniq(plants().map(function (p) { return p.country; })); }
-    // the live line + item count per value of a card field, under every other filter
-    function cardCounts(field, facet, values) {
-      var q = FS().q.trim().toLowerCase(), c = {};
-      values.forEach(function (k) { c[k] = 0; });
-      plants().forEach(function (p) {
-        var n = 0;
-        p.lines.forEach(function (l) { if (A.match(l, p, FS(), facet, q)) n++; });
-        p.items.forEach(function (it) { if (A.match(it, p, FS(), facet, q)) n++; });
-        if (p[field] in c) c[p[field]] += n;
+    // a country's batch states; a non-US batch's "state" is its country name, which is not a state
+    function realStates(k) {
+      var all = (D().scope && D().scope.states) || [];
+      return all.filter(function (s) { return s !== k && plants().some(function (p) { return p.country === k && p.state === s; }); });
+    }
+    function andList(xs) { return xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]; }
+    function placeName(k) { var st = realStates(k); return st.length ? andList(st) + ", " + k : k; }
+    // the choices of the where picker: value "" is the whole page, else "country|state" (state "" = the whole country). One choice when the page covers one place
+    function whereOptions() {
+      var cs = countries(), out = [];
+      if (cs.length === 1) {
+        var k = cs[0], st = realStates(k);
+        if (st.length < 2) return [{v: "", label: st.length ? st[0] : k}];
+        out.push({v: "", label: "all: " + st.join(", ")});
+        st.forEach(function (s) { out.push({v: k + "|" + s, label: s, c: k, s: s}); });
+        return out;
+      }
+      out.push({v: "", label: "all"});
+      cs.forEach(function (k) {
+        var st = realStates(k);
+        if (st.length < 2) return out.push({v: k + "|", label: st.length ? st[0] + ", " + k : k, c: k});
+        out.push({v: k + "|", label: "all of " + k, c: k, group: k});
+        st.forEach(function (s) { out.push({v: k + "|" + s, label: s, c: k, s: s, group: k}); });
       });
-      return c;
+      return out;
     }
-    // country picker: one choice, with the live line + item count under the other filters
-    function renderCountries() {
-      var sel = $("f-country"), all = countries();
+    function whereValue() { return FS().country ? FS().country + "|" + FS().state : ""; }
+    // the where picker, each choice with its live line + item count under the other filters (the unit the other pickers count)
+    function renderWhere() {
+      var sel = $("f-where");
       if (!sel) return;
-      $("f-country-wrap").hidden = all.length < 2;
-      var c = cardCounts("country", "country", all);
-      sel.innerHTML = '<option value="">all</option>' + all.map(function (k) {
-        return '<option value="' + esc(k) + '">' + esc(k) + " (" + c[k] + ")</option>";
-      }).join("");
-      sel.value = FS().country;
+      var q = FS().q.trim().toLowerCase(), per = plants().map(function (p) {
+        var n = 0;
+        p.lines.forEach(function (l) { if (A.match(l, p, FS(), "where", q)) n++; });
+        p.items.forEach(function (it) { if (A.match(it, p, FS(), "where", q)) n++; });
+        return n;
+      });
+      function count(o) {
+        var n = 0;
+        plants().forEach(function (p, i) { if ((!o.c || p.country === o.c) && (!o.s || p.state === o.s)) n += per[i]; });
+        return n;
+      }
+      var h = "", group = null;
+      whereOptions().forEach(function (o) {
+        if ((o.group || null) !== group) { h += (group ? "</optgroup>" : "") + (o.group ? '<optgroup label="' + esc(o.group) + '">' : ""); group = o.group || null; }
+        h += '<option value="' + esc(o.v) + '">' + esc(o.label) + " (" + count(o) + ")</option>";
+      });
+      sel.innerHTML = h + (group ? "</optgroup>" : "");
+      sel.value = whereValue();
     }
-    // the batch states as checkboxes (any ticked state matches; none ticked = every state), each with its live line + item count under the other filters
-    function renderStates() {
-      var box = $("f-state"), all = states();
-      renderScope();
-      if (!box) return;
-      // with several countries the box waits for a pick; a one-country review (the US states) shows it straight away
-      box.hidden = (!FS().country && countries().length > 1) || all.length < 2;
-      if (box.hidden) return;
-      var c = cardCounts("state", "state", all);
-      var was = box.querySelector("details"), open = was && was.open, n = FS().state.length;
-      box.innerHTML = '<details class="cdrop"' + (open ? " open" : "") + '><summary>state</summary><div class="cmenu"><button type="button" class="ctoggle"></button>' + all.map(function (k) {
-        return '<label class="check"><input type="checkbox" value="' + esc(k) + '"' + (!n || FS().state.indexOf(k) >= 0 ? " checked" : "") +
-          "> " + esc(k) + " (" + c[k] + ")</label>";
-      }).join("") + "</div></details>";
-      toggleLabel();
-    }
-    // header: each batch country as a box with its plant count
+    // header: what the page covers, in words, with its plant count. It does not follow the filters: the where picker shows the narrowing
     function renderScope() {
       var el = $("scope");
       if (!el || !D()) return;
-      var list = countries();
-      if (FS().country) list = list.filter(function (k) { return k === FS().country; });   // only the selected one
-      el.innerHTML = list.map(function (k) {
-        var n = plants().filter(function (p) { return p.country === k; }).length;
-        return '<span class="cbox" data-tip="' + esc(k) + ": " + n + " plant" + (n === 1 ? "" : "s") + ' in this review">' + esc(k) + "</span>";
-      }).join("");
-    }
-    function toggleLabel() {
-      var b = document.querySelector("#f-state .ctoggle"); if (!b) return;
-      var boxes = Array.prototype.slice.call(document.querySelectorAll("#f-state .cmenu input"));
-      b.textContent = boxes.length && boxes.every(function (i) { return i.checked; }) ? "deselect all" : "select all";
-    }
-    function toggleStates() {
-      var all = states(), sel = FS().state.length ? all.filter(function (k) { return FS().state.indexOf(k) >= 0; }) : all.slice();
-      FS().state = sel.length === all.length ? [NO_STATE] : [];
-      A.changed();
+      var n = plants().filter(function (p) { return !p.statewide; }).length;
+      el.innerHTML = '<span class="where">' + esc(countries().map(placeName).join("; ")) + "</span> &middot; " + plural(n, "plant");
     }
 
     // ---- checklist groups ----
@@ -176,6 +166,7 @@
       var gs = groupStats(), h = [], closeout = S.panel === "closeout";
       (D().groups || []).forEach(function (g) {
         var gid = String(g.id), s = gs[gid] || {total: 0, open: 0, pm: 0, rows: {}};
+        if (S.hideDone && s.total && !s.open && !g.panel && FS().group !== gid) return;
         var rows = (g.rows || []).filter(function (r) { return s.rows[r.row]; }).map(function (r) {
           var rs = s.rows[r.row];
           return '<span class="grow-row' + (rs.open ? "" : " done") + '"' + tipAttrs("checklist row " + r.row + ": " + r.label + (r.optional ? " (optional)" : "")) + ">" +
@@ -222,12 +213,12 @@
     function newRowTable(vals, refs, l) {
       vals = vals || {}; refs = refs || {};
       var tr = Object.keys(vals).filter(function (c) { return !blankv(vals[c]); }).map(function (c) {
-        return "<tr><td>" + esc(c) + "</td><td>" + esc(vals[c]) + "</td></tr>";
+        return "<tr><td>" + esc(c) + "</td><td>" + esc(vals[c]) + A.copyBtn(vals[c]) + "</td></tr>";
       });
       Object.keys(refs).forEach(function (c) {
         var us = A.asList(refs[c]);
         if (!us.length) return;
-        tr.push("<tr><td>" + esc(c) + "</td><td>" + us.map(function (u) { return A.urlLink(u) + " " + A.vmark(u, l); }).join("<br>") + "</td></tr>");
+        tr.push("<tr><td>" + esc(c) + "</td><td>" + us.map(function (u) { return A.urlLink(u) + A.copyBtn(u) + " " + A.vmark(u, l); }).join("<br>") + "</td></tr>");
       });
       return '<table class="rowdata">' + tr.join("") + "</table>";
     }
@@ -487,8 +478,7 @@
         "<li><b>Plant-wide:</b> a plant-level field such as the location or the owner is repeated on every unit row, so one accept covers all of them.</li>" +
         "<li><b>Items</b> tab: questions the researcher raised, plants and projects to watch, and owners or operators to create. They take a call and a note, but they never change a cell.</li>" +
         "<li><b>Checklist:</b> every change and item is sorted into one of the groups of the GOGPT QC/Country checklist (the \"checklist N\" chip; hover it for the rows it ticks). " +
-        "The <b>checklist</b> button over the left list shows the groups with how much of each is still open, and a click on a group filters the plants to it. A group with nothing open gets a check mark. " +
-        "The last group, <b>close-out</b>, is not a filter: it opens a panel with the end-of-state rows (units to mark updated or no changes, a draft for the state's summary row, the sheets and docs to update), all added up from the calls made so far.</li>" +
+        "The <b>checklist</b> dropdown in the filters shows one group at a time, decided or not.</li>" +
         "</ul>" +
         "<h4>your four calls</h4>" +
         "<ul>" +
@@ -557,18 +547,14 @@
       QK: {decision: "d", kind: "k", group: "g", tier: "t", dir: "dir", column: "col", q: "q", country: "c", state: "st", by: "by", status: "status", pm: "pm"},
 
       slots: {
-        "filters": '<label id="f-country-wrap">country <select id="f-country"></select></label>' +
-          '<span id="f-state" class="countries" role="group" aria-label="state"></span>' +
+        "filters": '<label><span data-tip="the country and state this page covers; pick one state to see only its plants">where</span> <select id="f-where"></select></label>' +
           '<label data-after="f-kind"><span data-tip="the group of the GOGPT QC/Country checklist every change and item is sorted into; pick one to see everything in it, decided or not">checklist</span> <select id="f-group"></select></label>' +
           '<label class="check" data-after="f-tier" data-tip="everything flagged with the ask-the-PM box, whatever its decision"><input type="checkbox" id="f-pm"> ask the PM</label>',
-        "filters-more": '<label class="check" data-tip="plants whose Status is changed by a staged edit"><input type="checkbox" id="f-status"> status changes only</label>',
-        "queue-pane": '<div id="pane-mode" class="tabs pane-mode" role="tablist">' +
-          '<button type="button" data-view="plants" role="tab" aria-selected="true" data-tip="one row per plant, with how much is still to decide">plants</button>' +
-          '<button type="button" data-view="checklist" role="tab" aria-selected="false" data-tip="the groups of the GOGPT QC/Country checklist, with how much of each is still open; click one to filter the plants to it">checklist</button></div>'
+        "filters-more": '<label class="check" data-tip="plants whose Status is changed by a staged edit"><input type="checkbox" id="f-status"> status changes only</label>'
       },
 
       // ---- filters ----
-      defaults: function () { return {group: "", country: "", state: [], status: false, pm: false}; },
+      defaults: function () { return {group: "", country: "", state: "", status: false, pm: false}; },
       // items (questions, watch items, entity checks) sit beside the edits whenever a checklist group or the ask-the-PM filter is on
       itemsInView: function (fs) { return !!(fs.group || fs.pm); },
       match: function (o, p, fs, skip) {
@@ -576,8 +562,7 @@
         if (skip !== "group" && fs.group && groupOf(o) !== fs.group) return false;
         if (fs.pm && !flagged(o, p)) return false;
         if (fs.status && (item || o.column !== "Status")) return false;
-        if (skip !== "country" && fs.country && p.country !== fs.country) return false;
-        if (skip !== "state" && fs.state && fs.state.length && fs.state.indexOf(p.state) < 0) return false;
+        if (skip !== "where" && fs.country && (p.country !== fs.country || (fs.state && p.state !== fs.state))) return false;
         return true;
       },
       tally: function (p) {
@@ -588,8 +573,7 @@
       },
       facetVal: function (o, facet) { return facet === "group" ? groupOf(o) : o[facet]; },
       renderChips: function () {
-        renderCountries();
-        renderStates();
+        renderWhere();
         var groups = D().groups || [], gids = groups.map(function (g) { return String(g.id); }), gl = {};
         groups.forEach(function (g) { gl[String(g.id)] = (g.id === "other" ? "" : g.id + " · ") + g.label; });
         if (gids.indexOf("other") < 0 && A.LINES.concat(A.ITEMS).some(function (o) { return groupOf(o) === "other"; })) { gids.push("other"); gl.other = "other"; }
@@ -600,24 +584,18 @@
         $("f-status").onchange = function () { FS().status = this.checked; A.changed(); };
         // "ask the PM" matches flagged lines and items whatever their decision: drop the undecided-only default
         $("f-pm").onchange = function () { FS().pm = this.checked; if (FS().pm && FS().decision === "undecided") FS().decision = ""; A.changed(); };
-        $("pane-mode").onclick = function (e) {
-          var b = e.target.closest("button[data-view]");
-          if (b) setView(b.getAttribute("data-view"));
-        };
-        $("f-country").onchange = function () { FS().country = this.value; FS().state = []; A.changed(); };
-        $("f-state").onclick = function (e) { if (e.target.classList.contains("ctoggle")) { e.stopPropagation(); toggleStates(); } };
-        $("f-state").onchange = function () {
-          var fs = FS();
-          fs.state = Array.prototype.map.call(this.querySelectorAll("input[type=checkbox]:checked"), function (i) { return i.value; });
-          if (fs.state.length === this.querySelectorAll("input[type=checkbox]").length) fs.state = [];
-          else if (!fs.state.length) fs.state = [NO_STATE];   // all ticked = no filter
+        $("f-where").onchange = function () {
+          var i = this.value.indexOf("|");
+          FS().country = i < 0 ? "" : this.value.slice(0, i);
+          FS().state = i < 0 ? "" : this.value.slice(i + 1);
           A.changed();
         };
       },
       syncControls: function () {
         var fs = FS();
-        $("f-country").value = fs.country;
-        if ($("f-country").value !== fs.country) fs.country = "";
+        // a route from before the where picker (several ticked states) or for a place not on the page falls back to the whole page
+        if (!whereOptions().some(function (o) { return o.v === whereValue(); })) { fs.country = ""; fs.state = ""; }
+        $("f-where").value = whereValue();
         $("f-status").checked = fs.status;
         $("f-pm").checked = fs.pm;
       },
@@ -775,15 +753,11 @@
       // ---- help, routing, boot ----
       info: info,
       routeKey: function (data) { var c = (data && data.scope) || {}; return "review-route:" + [c.country || "", (c.states || []).join(","), c.quarter || ""].join("|"); },
-      routeArray: function (f, vs) { return vs.filter(function (c) { return c === NO_STATE || allStates().indexOf(c) >= 0; }); },
       // the filter state was made before this file registered its keys: start it again with them
       onInit: function () { A.FS = A.defaults(); },
       onBoot: function (data) {
         renderScope();
-        var view = "plants";
-        try { view = localStorage.getItem("review-view") || "plants"; } catch (e) { /* ignore */ }
-        if (view === "checklist" && !(data.groups || []).length) view = "plants";
-        setView(view);
+        setView("plants");        // no checklist tab on the left bar any more
       },
       afterReload: function () { renderScope(); }
     };

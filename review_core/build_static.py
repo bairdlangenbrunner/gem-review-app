@@ -7,7 +7,7 @@ The page has no doctype, html, head or body tags of its own: the Artifact tool w
   2. <style>: review_core/web/style.css, then the tracker's web/ext.css
   3. the body of review_core/web/index.html, with its local script and stylesheet tags taken out
   4. the dataset: <script type="application/octet-stream" id="review-blob">, base64 of gzip {data, index}
-  5. <script>window.REVIEW_STATIC = {reviewer, built, ledger_url, tracker}</script>, where tracker is TrackerConfig.page_block()
+  5. <script>window.REVIEW_STATIC = {reviewer, built, ledger_url, logged, tracker}</script>, where tracker is TrackerConfig.page_block() and logged is the ids of page records already in the decision log (logged_ids)
   6. review_core/web/static_store.js, review_core/web/app.js, then the tracker's web/ext.js
 
 A missing ext.css or ext.js counts as empty. The dataset and its reviewer settings come before the scripts so every script can read them as it loads.
@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 
 from review_core.config import web_file
-from review_core.store import cards
+from review_core.store import cards, read_log
 
 CORE_WEB = Path(__file__).resolve().parent / "web"
 CORE_SCRIPTS = ("static_store.js", "app.js")
@@ -94,8 +94,18 @@ def _inline_js(name, text):
     return f"<script>\n{text.rstrip()}\n</script>"
 
 
-def render(data, reviewer, config, index=None, title=None, ledger_url=""):
-    """The page as one html string (see the module docstring). `index` defaults to pack_index."""
+def logged_ids(data, root):
+    """The ids of the page records already in the decision log: the records import_log.py brought in from an artifact (origin 'artifact'), read from each dir's review_log.jsonl under `root`. The page leaves these out of a "push to log" count."""
+    out = set()
+    for d in data.get("dirs", []):
+        for r in read_log(Path(root) / d):
+            if r.get("id") and r.get("origin") == "artifact":
+                out.add(str(r["id"]))
+    return sorted(out)
+
+
+def render(data, reviewer, config, index=None, title=None, ledger_url="", root=None):
+    """The page as one html string (see the module docstring). `index` defaults to pack_index. With `root` (the researcher repo, which the dir labels are relative to), the page also gets `logged`, the ids logged_ids finds."""
     html = (CORE_WEB / "index.html").read_text(encoding="utf-8")
     css = _read(CORE_WEB / "style.css").rstrip() + "\n" + _read(web_file(config, "ext.css")).rstrip()
     if "</style" in css.lower():
@@ -112,6 +122,7 @@ def render(data, reviewer, config, index=None, title=None, ledger_url=""):
     if left:
         raise SystemExit(f"index.html still references local files the page cannot load: {left}")
     cfg = json.dumps({"reviewer": reviewer or "", "built": data.get("built", ""), "ledger_url": ledger_url or "",
+                      "logged": logged_ids(data, root) if root else [],
                       "tracker": config.page_block()}, ensure_ascii=False).replace("</", "<\\/")
     scripts = [_inline_js(n, _read(CORE_WEB / n)) for n in CORE_SCRIPTS]
     ext_js = _read(web_file(config, "ext.js"))

@@ -121,7 +121,7 @@
 
   window.ReviewApp.define(function (A) {
     var $ = A.$, esc = A.esc, chip = A.chip, tipAttrs = A.tipAttrs, blankv = A.blankv, cur = A.cur, S = A.S;
-    var timeOf = A.timeOf, tierOf = A.tierOf, tag = A.tag, shortLink = A.shortLink, urlLink = A.urlLink, pairTable = A.pairTable;
+    var timeOf = A.timeOf, tierOf = A.tierOf, tag = A.tag, copyBtn = A.copyBtn, shortLink = A.shortLink, urlLink = A.urlLink, pairTable = A.pairTable;
     function FS() { return A.FS; }
     function D() { return A.D; }
     function toast(m) { A.toast(m); }
@@ -322,7 +322,7 @@
         var it = rivalConcern(r), done = it && it.call === "dismissed";
         var why = [r.concern_type ? "concern (" + r.concern_type + ")" : "concern", r.text].filter(Boolean).join(": ");
         var refs = (r.refs || []).map(shortLink).join(" ");
-        return '<tr class="rival' + (done ? " done" : "") + '"><td class="f">concern candidate</td><td></td><td><span class="newv c-rival">' + esc(r.cols[c]) + "</span></td>" +
+        return '<tr class="rival' + (done ? " done" : "") + '"><td class="f">concern candidate</td><td></td><td><span class="newv c-rival">' + esc(r.cols[c]) + "</span>" + copyBtn(r.cols[c]) + "</td>" +
           '<td class="t">' + tag("rival") + "</td></tr>" +
           '<tr class="note rival"><td></td><td colspan="3"><div class="concern-inline">' + esc(why) + (refs ? " &middot; " + refs : "") +
           (done ? " &middot; dismissed" : "") + "</div></td></tr>";
@@ -334,7 +334,7 @@
       var nowH, t = "", same = false;
       if (!has || (!blankv(was) && String(was).trim() === String(now).trim())) { nowH = wasH; same = true; }
       else if (blankv(now)) { nowH = '<span class="blank">(clear)</span>'; t = "clear"; }
-      else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + t + '">' + esc(now) + "</span>"; }
+      else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + t + '">' + esc(now) + "</span>" + copyBtn(now); }
       var r = '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";
       if (c in p._cont) { var cn = concernNote(p, c, l); if (cn) r += '<tr class="note"><td></td><td colspan="3">' + cn + "</td></tr>"; }
       if (has) r += rivalRows(l, c);
@@ -373,7 +373,7 @@
         propH = !added.length && !dropped.length ? "<ul>" + cell.map(function (u) { return '<li class="kept">' + shortLink(u) + "</li>"; }).join("") + "</ul>"
           : "<ul>" + cell.map(function (u) {
             var isNew = was.indexOf(u) < 0;
-            return isNew ? '<li><span class="newref c-fill">' + shortLink(u) + "</span> " + vmark(u, l) + "</li>"
+            return isNew ? '<li><span class="newref c-fill">' + shortLink(u) + "</span>" + copyBtn(u) + " " + vmark(u, l) + "</li>"
                          : '<li class="kept">' + shortLink(u) + "</li>";
           }).join("") + "</ul>";
       }
@@ -412,7 +412,7 @@
         ["ratio", l.length_ratio == null ? "" : String(l.length_ratio)]
       ].filter(function (r) { return r[1] !== ""; }).map(function (r) { return '<div class="k">' + r[0] + '</div><div class="v">' + esc(r[1]) + "</div>"; });
       rows.push('<div class="k">RouteAccuracy</div><div class="v">' + (blankv(was) ? "" : '<span class="was">' + esc(was) + "</span>") +
-        (blankv(sug) ? "" : '<span class="arrow">→</span><span class="newv">' + esc(sug) + "</span>") + "</div>");
+        (blankv(sug) ? "" : '<span class="arrow">→</span><span class="newv">' + esc(sug) + "</span>" + copyBtn(sug)) + "</div>");
       rows.push('<div class="k">QC</div><div class="v">' + (l.qc_passed ? chip("✓ passed", "ok") : chip("✗ did not pass", "bad")) + "</div>");
       rows.push('<div class="k">geometry</div><div class="v">' + (geo ? geoA + "<code>" + esc(l.geometry_file) + "</code> ↗</a>" : '<span class="muted">none</span>') + "</div>");
       return '<div class="chg">' + rows.join("") + '</div><div class="faint" style="margin-top:4px">accepting records approval for the §8 apply; it writes no cell.</div>';
@@ -420,12 +420,12 @@
     function newRowBody(l) {
       var vals = l.proposed_values || {}, refs = l.proposed_refs || {};
       var tr = Object.keys(vals).filter(function (c) { return !blankv(vals[c]); }).map(function (c) {
-        return "<tr><td>" + esc(c) + "</td><td>" + esc(vals[c]) + "</td></tr>";
+        return "<tr><td>" + esc(c) + "</td><td>" + esc(vals[c]) + copyBtn(vals[c]) + "</td></tr>";
       });
       Object.keys(refs).forEach(function (c) {
         var us = Array.isArray(refs[c]) ? refs[c] : [refs[c]];
         if (!us.length) return;
-        tr.push("<tr><td>" + esc(c) + "</td><td>" + us.map(function (u) { return urlLink(u); }).join("<br>") + "</td></tr>");
+        tr.push("<tr><td>" + esc(c) + "</td><td>" + us.map(function (u) { return urlLink(u) + copyBtn(u); }).join("<br>") + "</td></tr>");
       });
       var h = l["class"] === "matched_existing"
         ? '<div class="row1">' + chip("matches existing " + (l.matched_project_id || ""), "newrow") + ' <span class="faint">candidate data for a pipeline already tracked</span></div>' : "";

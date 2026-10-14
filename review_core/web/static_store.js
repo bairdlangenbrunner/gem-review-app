@@ -44,6 +44,7 @@
     saveError: function (code) { return "the page could not save to the artifact (" + code + "): your calls are kept in this browser; use download decisions before closing"; },
     noPush: "the shared log is not available here, so a push cannot be requested. Use download decisions.",
     nothing: "no calls yet; nothing to push",
+    nothingNew: "nothing new to push: every call you made here is already in the log or was sent in an earlier push",
     newCalls: function (n, names) { return n + " new decision" + (n === 1 ? "" : "s") + " by " + names.join(", "); }
   };
   function text(k) { return H.texts[k] != null ? H.texts[k] : TEXT[k]; }
@@ -571,16 +572,41 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
     return Promise.resolve({name: fname, count: recs.length});
   }
-  // "push to log": make sure the shared log is current, then leave a request document in the requests collection for a Claude Code session watching this artifact
+  // "push to log": make sure the shared log is current, then leave a request document in the requests collection for a Claude Code session watching this artifact.
+  // Only calls the log does not have yet count (the import skips records already in the log by id, so a push only ever adds what is new). A call is left out when
+  //   - its id is in CFG.logged, the page records the log already held when the page was built (build_static.logged_ids), or
+  //   - the dataset already shows a person's decision on its line or item at the same time or later (it was imported, or superseded and skipped), or
+  //   - this browser already sent it in an earlier push (kept per set of folders, so a rebuilt page, which carries the old calls over, does not count them again).
+  var LOGGED = {};
+  (CFG.logged || []).forEach(function (id) { LOGGED[id] = 1; });
+  function pushedKey() { return "review-pushed:" + G.dirs.join(","); }
+  function readPushed() {
+    try { var a = JSON.parse(localStorage.getItem(pushedKey()) || "[]"); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  function inLog(r) {
+    if (r.id && LOGGED[r.id]) return true;
+    var e = G.idx && G.idx[r.key], o = e && e.obj;
+    return !!(o && o.reviewed && o.decided_at && ms(o.decided_at) >= ms(r.ts));
+  }
+  function unpushed() {
+    var sent = {};
+    readPushed().forEach(function (f) { sent[f] = 1; });
+    return G.own.filter(function (r) { return !sent[fingerprint(r)] && !inLog(r); });
+  }
   function requestPush() {
     if (!G.db) return Promise.reject(new Error(text("noPush")));
     if (!G.own.length) return Promise.reject(new Error(text("nothing")));
-    var n = G.own.length;
+    var fresh = unpushed(), n = fresh.length;
+    if (!n) return Promise.reject(new Error(text("nothingNew")));
     return settle().then(function () {
       return G.db.doc("requests/" + segment(G.uid || "anon") + "~" + segment(G.device) + "~push").set({
-        reviewer: G.me, uid: G.uid, device: G.device, requested: now(), records: n,
+        reviewer: G.me, uid: G.uid, device: G.device, requested: now(), records: n, total: G.own.length,
         built: G.built, dirs: G.dirs, snapshot: G.snapshot, seq: Date.now(), status: "requested"});
-    }).then(function () { return {count: n}; }, function (e) {
+    }).then(function () {
+      // every own call the log does not show yet has now been sent; the ones it shows need no entry
+      try { localStorage.setItem(pushedKey(), JSON.stringify(G.own.filter(function (r) { return !inLog(r); }).map(fingerprint))); } catch (e) { /* the next push counts these again; the import still skips them */ }
+      return {count: n};
+    }, function (e) {
       throw new Error("the request did not go through (" + ((e && (e.code || e.message)) || "unknown") + ")");
     });
   }

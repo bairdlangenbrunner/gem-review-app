@@ -4,11 +4,13 @@ Approved by Baird on 2026-10-08 after the GOGPT and pipelines review apps kept d
 
 ## What lives where
 
-**Here, shared core (`review_core/`)**: the page (`web/index.html`, `web/app.js`, `web/style.css`), the three store adapters (`web/static_store.js` for the single-file page and the artifact database, `web/gas.js` for Apps Script, and the loopback adapter inside `app.js`), the generic decision log (`store.py`: append-only `review_log.jsonl`, derived `review_decisions.json`, latest wins, undo, initials, atomic write with rollback, validation), the loopback server (`server.py`) with route hooks, and the single-file builder (`build_static.py`).
+**Here, shared core (`review_core/`)**: the page (`web/index.html`, `web/app.js`, `web/style.css`), the three store adapters (`web/static_store.js` for the single-file page and the artifact database, `web/gas.js` for Apps Script, and the loopback adapter inside `app.js`), the generic decision log (`store.py`: append-only `review_log.jsonl`, derived `review_decisions.json`, latest wins, undo, initials, atomic write with rollback, validation), the loopback server (`server.py`) with route hooks, and the single-file builder (`build_static.py`). Also the page registry logic (`pages.py`: content-hash fingerprints of what a live page was built from, the staleness check with plain-word reasons, `mark_published`) and the Claude Code hook output built on it (`hooks.py`); see `docs/refresh.md`.
 
 **Here, per tracker (`trackers/<name>/`)**: a Python config (`config.py`: the `TrackerConfig` below) and a page extension (`web/ext.js`, `web/ext.css`) registered through the hook points below. Nothing in a tracker folder is reachable without the core, and the core never names a tracker.
 
-**In each researcher repo (`review_app/`)**: `review_data.py` (builds the dataset from that tracker's staging files; the only place that knows the staged record shapes), the ledger and its Google store (`ledger.py`, `pull.py`, `import_log.py`, `google.json`), workbook and push consumers (`build_review_package.py --decisions`, pipelines `push.py`, `publish.py`, `gas_push.py`), `artifacts.json` and `build_all.py`, and thin shims: `store.py`, `server.py`, `build_static.py` that bind the core to the tracker config so every existing import (`from review_app import store`, `import store`) and every existing test keeps working.
+**In each researcher repo (`review_app/`)**: `review_data.py` (builds the dataset from that tracker's staging files; the only place that knows the staged record shapes), the ledger and its Google store (`ledger.py`, `pull.py`, `import_log.py`, `google.json`), workbook and push consumers (`build_review_package.py --decisions`, pipelines `push.py`, `publish.py`, `gas_push.py`), `artifacts.json` (the registry of live pages, with a `published` block per page) and `build_all.py` (`--check`, build, `--mark-published`, `--hook`, over `review_core.pages` with that repo's adapter), `.claude/settings.json` (the hooks), and thin shims: `store.py`, `server.py`, `build_static.py` that bind the core to the tracker config so every existing import (`from review_app import store`, `import store`) and every existing test keeps working.
+
+**Here, scripts (`scripts/check_consumers.py`)**: runs the two sibling repos' page checks and hooks, so a session opened here hears about stale live pages after a change to the shared interface.
 
 **Not moved**: anything that reads a researcher repo's staging files or talks to Google. The core never imports from a researcher repo.
 
@@ -102,7 +104,7 @@ The builder takes the pipelines form for every tracker: the dataset is gzip-comp
 ## Phases
 
 1. This plan; the shared core extracted from the pipelines app; GOGPT ported onto it (config, extension, shims); the GOGPT test suite passes unchanged except for file paths.
-2. Pipelines ported the same way; its suites pass. Built and tested on 2026-10-08 in a scratch copy of pipelines-researcher (shims for `store.py`, `server.py` and `build_static.py`, `bundle.py` building the Apps Script page from the shared web files, its own `web/` removed); not yet landed in pipelines-researcher itself.
+2. Pipelines ported the same way; its suites pass. Built and tested on 2026-10-08 in a scratch copy of pipelines-researcher and landed in that repo on 2026-10-09: shims for `store.py`, `server.py` and `build_static.py`, `bundle.py` building the Apps Script page from the shared web files, its own `web/` removed. The gas batch artifact page was rebuilt and republished from the shared interface the same day.
 3. LNG carriers, later.
 
 Verification for each port: the researcher repo's review tests pass; the loopback server serves its page and a headless browser renders a card and saves a decision; a single-file page builds and round-trips a decision through `static_store.js`; the live artifact pages are rebuilt and republished from the work profile.

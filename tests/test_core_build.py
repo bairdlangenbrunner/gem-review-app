@@ -67,3 +67,19 @@ def test_refusals(web):
     data["widgets"][0]["lines"][0]["key"] = "elsewhere::W1:size"
     with pytest.raises(SystemExit, match="does not start with its dir"):
         build_static.pack_index(data, make_config())
+
+
+def test_logged_ids_are_the_imported_page_records(web, tmp_path):
+    data = make_data(["batches/a/staging", "batches/b/staging"])
+    a = tmp_path / "repo" / "batches/a/staging"
+    a.mkdir(parents=True)
+    (a / "review_log.jsonl").write_text("\n".join(json.dumps(r) for r in [
+        {"id": "p1", "origin": "artifact", "key": "k"},
+        {"id": "s1", "origin": "local", "key": "k"},
+        {"origin": "artifact", "key": "k"},
+        {"id": "p0", "origin": "artifact", "key": "k"}]) + "\n")
+    html = build_static.render(data, "BL", make_config(web_dir=web), root=tmp_path / "repo")
+    cfg_js = json.loads(re.search(r"window.REVIEW_STATIC = (\{.*?\});</script>", html).group(1))
+    assert cfg_js["logged"] == ["p0", "p1"]
+    html = build_static.render(data, "BL", make_config(web_dir=web))
+    assert json.loads(re.search(r"window.REVIEW_STATIC = (\{.*?\});</script>", html).group(1))["logged"] == []
