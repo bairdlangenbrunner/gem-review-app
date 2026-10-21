@@ -93,10 +93,13 @@
         r.snapshot = window.StaticStore.state.snapshot || "";
         r.origin = "artifact";
       },
-      // the log laid over the data: the rival a person took, a call made against other backend cells, and the covered records
-      overlay: function (data, last) {
+      // the log laid over the data: applied, the rival a person took, a call made against other backend cells, and the covered records
+      overlay: function (data, last, api) {
         (data.cards || data.pipelines || []).forEach(function (p) {
           (p.lines || []).forEach(function (l) {
+            // applied is the latest machine record (config.overlay_extras). The page was built with the whole log and the browser holds part of it, so a machine record here only replaces an older one.
+            var m = api.speak(l.key)[1];
+            if (m && !(l.applied && Date.parse(l.applied.at) > Date.parse(m.ts))) l.applied = {by: m.reviewer, at: m.ts};
             var rec = last[l.key];
             if (!rec) return;
             var live = rec.undecided ? null : rec;
@@ -150,7 +153,7 @@
     function landed(l) { return !!l.in_backend || !!(l.applied && l.applied.by === "push"); }
     // a status line whose folded Status [ref] record still says something else: deciding again covers it
     function gap(l) { return !!(cur(l) && l.uncovered && l.uncovered.length); }
-    function dimmed(l) { return (A.settled(l) && !gap(l)) || landed(l); }
+    function dimmed(l) { return (A.grayed(l) && !gap(l)) || landed(l); }
     function splitUrls(text) {
       return String(text || "").split(/,\s*(?=https?:\/\/)|\n+/).map(function (s) { return s.trim(); }).filter(Boolean);
     }
@@ -160,6 +163,15 @@
       var seen = {};
       return (p.segments || []).map(function (s) { return String(s.segment || "").trim(); })
         .filter(function (n) { if (!n || seen[n]) return false; seen[n] = 1; return true; });
+    }
+    // a new pipeline card: say whether the sheet already has a pipeline of this name, and link its wiki page
+    function existingHtml(ex) {
+      var out = (ex.matches || []).map(function (m) {
+        return '<b class="warnname">already on the sheet: ' + esc(m.pid) + (m.name ? " " + esc(m.name) : "") + " (row " + esc(m.sheet_row) + ")</b>" +
+          (m.wiki ? ' <a href="' + esc(m.wiki) + '" target="_blank" rel="noopener">its wiki ↗</a>' : "");
+      });
+      if (ex.wiki_staged) out.push('<a href="' + esc(ex.wiki_staged) + '" target="_blank" rel="noopener">staged wiki page ↗</a>');
+      return out.length ? out.join(" · ") : "no pipeline of this name on the sheet";
     }
     function parseRows(s) {      // "357-400, 1141" -> [[357,400],[1141,1141]]; null when empty or unreadable
       var out = [];
@@ -263,13 +275,26 @@
           return '<label class="check"><input type="checkbox" value="' + k + '"' + (!n || fs.fuel.indexOf(k) >= 0 ? " checked" : "") + "> " + k + "</label>";
         }).join("") + "</div></details>";
     }
-    // header: each batch country as a box (commodity is a filter; the snapshot name is in the h1 tip)
+    // header: the ticked fuels as boxes, then every batch country, alphabetical; countries the filter leaves out are grayed, and a click ticks or unticks that country
     function renderScope() {
-      var d = D(), fs = FS(), list = countries();
+      var d = D(), fs = FS(), list = countries().slice();
       if (!list.length && d.scope && d.scope.country) list = [d.scope.country];
-      if (fs.country.length) list = list.filter(function (k) { return fs.country.indexOf(k) >= 0; });   // only the selected ones
-      $("scope").innerHTML = FUELS.filter(function (k) { return !fs.fuel.length || fs.fuel.indexOf(k) >= 0; }).map(function (k) { return '<span class="cbox fbox" data-tip="fuel filter: ' + k + ' pipelines">' + k + "</span>"; }).join("") +
-        list.map(function (k) { return '<span class="cbox" data-tip="country filter: ' + esc(cname(k)) + ' pipelines (' + A.cards().filter(function (p) { return p._countries.indexOf(k) >= 0; }).length + ' in this batch)">' + esc(cname(k)) + "</span>"; }).join("");
+      list.sort(function (a, b) { return cname(a).localeCompare(cname(b)); });
+      var on = function (sel, k) { return !sel.length || sel.indexOf(k) >= 0; };
+      $("scope").innerHTML = FUELS.filter(function (k) { return on(fs.fuel, k); }).map(function (k) {
+        return '<span class="cbox fbox" data-tip="fuel filter: ' + k + ' pipelines">' + k + "</span>";
+      }).join("") + list.map(function (k) {
+        return '<span class="cbox' + (on(fs.country, k) ? "" : " off") + '" data-kind="country" data-v="' + esc(k) + '" data-tip="country filter: ' + esc(cname(k)) + ' pipelines (' + A.cards().filter(function (p) { return p._countries.indexOf(k) >= 0; }).length + ' in this batch; click to ' + (on(fs.country, k) ? "remove" : "add") + ')">' + esc(cname(k)) + "</span>";
+      }).join("");
+    }
+    function toggleScope(e) {
+      var b = e.target.closest && e.target.closest(".cbox[data-kind=country]");
+      if (!b) return;
+      var fs = FS(), v = b.getAttribute("data-v"), all = countries();
+      var sel = fs.country.length ? all.filter(function (k) { return fs.country.indexOf(k) >= 0; }) : all.slice();
+      sel = sel.indexOf(v) >= 0 ? sel.filter(function (k) { return k !== v; }) : sel.concat([v]);
+      fs.country = sel.length === all.length ? [] : sel.length ? sel : [NO_COUNTRY];
+      A.changed();
     }
     // the select-all button acts on the countries the search leaves visible
     function toggleLabel() {
@@ -333,8 +358,8 @@
       var wasH = blankv(was) ? "" : "<span>" + esc(was) + "</span>";
       var nowH, t = "", same = false;
       if (!has || (!blankv(was) && String(was).trim() === String(now).trim())) { nowH = wasH; same = true; }
-      else if (blankv(now)) { nowH = '<span class="blank">(clear)</span>'; t = "clear"; }
-      else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + t + '">' + esc(now) + "</span>" + copyBtn(now); }
+      else if (blankv(now)) { nowH = '<span class="newv c-' + tierOf(l) + '">(clear)</span>'; t = "clear"; }
+      else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + tierOf(l) + '">' + esc(now) + "</span>" + copyBtn(now); }
       var r = '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";
       if (c in p._cont) { var cn = concernNote(p, c, l); if (cn) r += '<tr class="note"><td></td><td colspan="3">' + cn + "</td></tr>"; }
       if (has) r += rivalRows(l, c);
@@ -361,7 +386,7 @@
         return '<li class="' + (cell.length && cell.indexOf(u) < 0 ? "dropped" : "") + '">' + shortLink(u) + "</li>";
       }).join("") + "</ul>" : "";
       var propH, t;
-      if (l.kind === "status" && l.class_out === "STALE") { propH = '<span class="muted">none (stale-status flag)</span>'; t = ""; }
+      if (l.kind === "status" && l.class_out === "STALE" && !cell.length) { propH = '<span class="muted">none (stale-status flag)</span>'; t = ""; }
       else if (!cell.length) {
         propH = '<span class="muted">' + esc({DEAD_LINK: "link gone (404/410), no replacement found", REF_BLOCKED: "could not be fetched from here, no replacement found", REF_UNSUPPORTED: "page loads but does not support the value"}[l.class_out] || "no URL proposed") + "</span>";
         t = "";
@@ -373,7 +398,7 @@
         propH = !added.length && !dropped.length ? "<ul>" + cell.map(function (u) { return '<li class="kept">' + shortLink(u) + "</li>"; }).join("") + "</ul>"
           : "<ul>" + cell.map(function (u) {
             var isNew = was.indexOf(u) < 0;
-            return isNew ? '<li><span class="newref c-fill">' + shortLink(u) + "</span>" + copyBtn(u) + " " + vmark(u, l) + "</li>"
+            return isNew ? '<li><span class="newref c-' + tierOf(l) + '">' + shortLink(u) + "</span>" + copyBtn(u) + " " + vmark(u, l) + "</li>"
                          : '<li class="kept">' + shortLink(u) + "</li>";
           }).join("") + "</ul>";
       }
@@ -527,7 +552,10 @@
       var cont = it.contested || {};
       Object.keys(cont).forEach(function (c) {
         h += '<div class="concern-inline">' + chip("contested", "cont") + " <b>" + esc(c) + "</b>: " + (cont[c] ? esc(cont[c]) : "<i>no detail recorded</i>") + "</div>";
+        // a candidate the owner styler holds (two owners, a slash, a near-match spelling): no accept-candidate button, say why
+        if ((it.held_candidates || {})[c]) h += '<div class="faint">not offered as a candidate: ' + esc(it.held_candidates[c]) + " Use suggest to enter the right value: two owners, the accurate one, or the team's spelling.</div>";
       });
+      if (it.held_candidates) used.held_candidates = 1;
       (it.rival_lines || []).forEach(function (k) {
         var l = A.LINE_BY_KEY[k];
         if (!l) return;
@@ -663,7 +691,7 @@
       else if (A.STICKY === STALE) A.setSticky("");
     }
 
-    var HELP = [["j / k", "next / previous line (runs on into the next pipeline)"], ["J / K", "next / previous pipeline"],
+    var HELP = [["j / k", "next / previous change still to decide (runs on into the next pipeline)"], ["K", "previous change, including ones you just decided"], ["J", "next pipeline"],
                 ["a / h / r", "accept / hold / reject the change; saved at once, then on to the next open change"], ["c", "accept the concern's candidate instead of the proposal (a suggest with that value; the concern is confirmed in the same save)"], ["s", "suggest a different value: inline form on the change (value + note; enter saves, esc cancels); routed to an update worklist by update_seed.py"],
                 ["i", "switch the card between changes and items; calls save on change"],
                 ["u", "undo: the change goes back to undecided"], ["o", "open the change's first ref (new tab)"], ["d", "show / hide the change's details"],
@@ -734,7 +762,7 @@
       hideFields: ["decision_note", "also_in", "sheet_row", "sheet_row_moved", "contested", "default", "rivals", "rival_lines", "rival",
                    "project_id", "wiki", "pipeline_name", "segment_name", "value_cols", "values", "primary_value_col", "primary_value", "countries"],
       QK: {decision: "d", kind: "k", severity: "sev", tier: "t", class_out: "c", dir: "dir", column: "col", q: "q",
-           contested: "cont", owners: "owners", landed: "landed", country: "cty", fuel: "fuel", by: "by", drift: "drift"},
+           contested: "cont", owners: "owners", country: "cty", fuel: "fuel", by: "by", drift: "drift"},
       routeEmpty: "all",
       expose: {setLive: setLive},
 
@@ -749,10 +777,9 @@
       },
 
       onInit: function () {
-        // the second filter row of the original page: the landed box, then "more filters" and "reset"
+        // the second filter row of the original page: "more filters" and "reset"
         var first = document.querySelector(".filters .row2"), r2 = document.createElement("div");
         r2.className = "row2";
-        r2.innerHTML = '<label class="check" data-tip="changes whose value and refs the snapshot already holds are left out of the queue unless this is ticked"><input type="checkbox" id="f-landed" aria-description="changes the snapshot already holds are left out of the queue unless this is ticked"> show changes already in the backend</label>';
         r2.appendChild($("f-more"));
         r2.appendChild($("f-reset"));
         first.parentNode.insertBefore(r2, first.nextSibling);
@@ -782,7 +809,7 @@
 
       // ---- filters ----
       defaults: function () {
-        return {severity: "", class_out: "", row: "", contested: false, owners: false, landed: false, country: [], fuel: ["gas"], drift: false};
+        return {severity: "", class_out: "", row: "", contested: false, owners: false, country: [], fuel: ["gas"], drift: false};
       },
       prepare: function (p) {
         // column -> the validity concerns naming it (context under a value row)
@@ -803,7 +830,7 @@
       match: function (o, p, fs, skip) {
         var item = !!o._item;
         if (item && INFO[o.kind]) return false;
-        if (!item && !fs.landed && landed(o)) return false;
+        // (a landed line is left out of the undecided view by the core, through `counted` below)
         if (skip !== "severity" && fs.severity && (item || sevOf(o) !== fs.severity)) return false;
         if (fs.class_out && o.class_out !== fs.class_out) return false;
         if (fs.contested && !(item && unanswered(o))) return false;
@@ -831,6 +858,7 @@
           var s = $(id);
           s.innerHTML = '<option value="">any</option>';
           values.forEach(function (v) { var o = document.createElement("option"); o.value = v; o.textContent = label(v); s.appendChild(o); });
+          A.fitSelect(s);
         }
         fill("f-class_out", A.uniq(listed.map(function (l) { return l.class_out; })), classLabel);
         fill("f-dir", (D().dirs || []).filter(function (d) { return listed.some(function (o) { return o.dir === d; }); }), origDir);
@@ -844,10 +872,9 @@
           if (fs.kind !== "concern") { fs.contested = false; $("f-contested").checked = false; }
           A.changed();
         };
-        ["owners", "landed"].forEach(function (f) {
-          $("f-" + f).onchange = function () { FS()[f] = this.checked; A.changed(); };
-        });
+        $("f-owners").onchange = function () { FS().owners = this.checked; A.changed(); };
         $("f-contested").onchange = function () { var fs = FS(); fs.contested = this.checked; if (fs.contested) fs.kind = "concern"; A.changed(); };
+        $("scope").onclick = toggleScope;
         $("f-fuel").onchange = function () {
           var fs = FS();
           fs.fuel = Array.prototype.map.call(this.querySelectorAll("input:checked"), function (i) { return i.value; });
@@ -874,7 +901,7 @@
         var fs = FS(), s = $("f-class_out");
         s.value = fs.class_out;
         if (s.value !== fs.class_out) { fs.class_out = ""; s.value = ""; }
-        ["contested", "owners", "landed", "drift"].forEach(function (f) { $("f-" + f).checked = fs[f]; });
+        ["contested", "owners", "drift"].forEach(function (f) { $("f-" + f).checked = fs[f]; });
       },
       activeChips: function (add, where) {
         var fs = FS();
@@ -885,11 +912,9 @@
         if (fs.drift) add("drift", "sheet changed since decided", true);
         if (fs.contested) add("contested", "unanswered concerns", true);
         if (fs.owners) add("owners", "owners tab", true);
-        if (fs.landed) add("landed", "incl. changes already in the backend", false);
       },
-      // lines the sheet already holds are not waiting on a call (progress and tab counts)
-      counted: function (l) { return !landed(l) || FS().landed; },
-      showAll: function (fs) { fs.landed = true; },
+      // lines the sheet already holds are not waiting on a call (progress and tab counts); the decision filter (default undecided) hides them like any decided line
+      counted: function (l) { return !landed(l); },
       routeArray: function (f, vs) {
         return vs.filter(function (c) { return c === NO_COUNTRY || (f === "fuel" ? FUELS : countries()).indexOf(c) >= 0; });
       },
@@ -921,30 +946,37 @@
                 nc && nc.aliases.length && "aliases: " + esc(nc.aliases.join(", ")),
                 p.country && esc(p.country), p.status && "status: " + esc(p.status),
                 p.wiki && '<a href="' + esc(p.wiki) + '" target="_blank" rel="noopener">wiki ↗</a>',
+                p.existing && existingHtml(p.existing),
                 A.tierSummary(p)];
       },
-      cardSub: function (p) { return segNames(p).join(" / "); },
+      cardSub: function (p) {
+        if (p.pid.indexOf("new:") !== 0) return segNames(p).join(" / ");
+        // a new pipeline card lists its segment name below the title, blank when the candidate has none
+        var nr = (p.lines || []).filter(function (l) { return l.kind === "new_row"; })[0];
+        var seg = String((nr && nr.proposed_values && nr.proposed_values.SegmentName) || (nr && nr.segment_name) || "").trim();
+        return segNames(p).join(" / ") || seg;
+      },
       showPid: function (p) { return !(p.pid.indexOf("new:") === 0 || p.pid === "scope" || p.name_card); },
       bulkButtons: function (p) {
         return (function () {
           var minor = p.lines.filter(function (l) { return sevOf(l) === "minor"; });
           var on = minor.some(function (l) { return !cur(l); });
           var why = !minor.length ? "no minor changes on this pipeline" : "every minor change is already decided";
-          return '<button type="button" class="bulk b-accept' + (on ? "" : " off") + '" data-bulk="pipe-minor"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
+          return '<button type="button" class="bulk b-accept' + (on ? "" : " off") + '" data-bulk="bulk-minor"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
             tipAttrs(on ? "accept every undecided minor change on this pipeline (refs only, the values stand; rival candidates left to decide by hand) that the filters show" : why) + ">accept all minor changes</button>";
         })() +
-          '<button type="button" class="bulk b-accept" data-bulk="pipe-high"' + tipAttrs("accept every undecided high-confidence change on this pipeline, major or minor (rival candidates left to decide by hand) that the filters show") + ">accept all high-conf changes</button>" +
+          '<button type="button" class="bulk b-accept" data-bulk="bulk-high"' + tipAttrs("accept every undecided high-confidence change on this pipeline, major or minor (rival candidates left to decide by hand) that the filters show") + ">accept all high-conf changes</button>" +
           (function () {
             var nonHigh = p.lines.filter(function (l) { return tierOf(l) !== "high"; });
             var on = nonHigh.some(function (l) { return !cur(l); });
             var why = !nonHigh.length ? "all suggestions are high-confidence" : "every medium- and low-confidence suggestion is already decided";
-            return '<button type="button" class="bulk b-hold' + (on ? "" : " off") + '" data-bulk="pipe-all"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
+            return '<button type="button" class="bulk b-hold' + (on ? "" : " off") + '" data-bulk="bulk-all"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
               tipAttrs(on ? "accept every undecided change on this pipeline, any confidence level (rival candidates left to decide by hand) that the filters show" : why) + ">accept all changes</button>";
           })();
       },
       // a line with a live rival candidate is left to decide by hand
       bulkTargets: function (mode, l) { return liveRivals(l).length ? "rival" : null; },
-      bulkSkip: {rival: " with a rival candidate (decide those by hand)"},
+      bulkSkip: {rival: " with a rival candidate (decide those by hand)", uncounted: " already in the backend sheet"},
       // lines grouped by segment when the ProjectID spans several sheet rows
       groupLines: function (p, keep) {
         var segs = p.segments || [];
@@ -1009,7 +1041,9 @@
       groupCount: function (items) { return "(" + items.length + ")"; },
 
       // ---- records ----
-      applyRecord: function (r, l, it, remote) {
+      // machine is given when the page's store chose r by its speaker rules (static_store.js speak): r is then the record that speaks for the line and machine
+      // the line's latest machine record, or null. Without it (a save, gas.js) records land one at a time and a machine record is recognized here.
+      applyRecord: function (r, l, it, remote, machine) {
         if ("call" in r) {
           if (!it) return false;
           it.call = r.undecided ? null : r.call;
@@ -1021,7 +1055,10 @@
         }
         if (!l) return false;
         if (remote && S.pipe >= 0 && l._p === S.pipe) S.stay[r.key] = true;   // lines on the open card stay in view
-        if (MACHINE[r.reviewer]) {
+        if (machine !== undefined) {
+          // the store already let a person's live call speak over any machine record; the browser holds only part of the log, so no machine record here leaves applied as built
+          if (machine) l.applied = {by: machine.reviewer, at: machine.ts};
+        } else if (MACHINE[r.reviewer]) {
           // a machine record (push.py after a write, a backend sync) marks the line applied; a person's standing call keeps speaking for it
           l.applied = {by: r.reviewer, at: r.ts};
           if (l.reviewed) return true;
@@ -1094,7 +1131,7 @@
         staleCheck();
         renderScope();
         var dirs = d.dirs || [], scope = d.scope || {}, St = A.Store;
-        document.querySelector(".top h1").dataset.tip = "built " + A.et(d.built) + " · " + dirs.length + " staging dir" + (dirs.length === 1 ? "" : "s") + ": " + dirs.map(origDir).join(", ") + " · " + scope.commodity + " · " + scope.snapshot;
+        delete document.querySelector(".top h1").dataset.tip;   // core sets a batch-list tip; not useful here
         $("sync").hidden = !St.caps.refresh;          // shipped hidden: the Google page and a --no-build server cannot refresh
         $("sync").dataset.tip = "pull the live sheet (~1 min), rebuild, and mark changes it already holds";
         $("push").hidden = !St.caps.push;

@@ -44,7 +44,6 @@
       var rows = (o.checks || []).map(function (n) { return "row " + n + (ROW_LABEL[n] ? ": " + ROW_LABEL[n] : ""); });
       return "QC/Country checklist group " + groupOf(o) + ": " + groupLabel(groupOf(o)) + (rows.length ? "\nticks " + rows.join("\n") : "\n(no checklist row: a gap the checklist does not cover)");
     }
-    function isOpen(o) { return o._item ? !(o.call && o.reviewed) : !cur(o); }
     function flagged(o, p) { return !!(o.pm_flag || (p && p.pm_flag)); }
     // "new:<name>" ids mark a plant GEM does not track yet (a discovery candidate on the monitor list)
     function untracked(p) { return !p.pid || p.pid.indexOf("new:") === 0; }
@@ -83,55 +82,81 @@
     }
     function andList(xs) { return xs.length < 2 ? xs.join("") : xs.slice(0, -1).join(", ") + " and " + xs[xs.length - 1]; }
     function placeName(k) { var st = realStates(k); return st.length ? andList(st) + ", " + k : k; }
-    // the choices of the where picker: value "" is the whole page, else "country|state" (state "" = the whole country). One choice when the page covers one place
-    function whereOptions() {
-      var cs = countries(), out = [];
-      if (cs.length === 1) {
-        var k = cs[0], st = realStates(k);
-        if (st.length < 2) return [{v: "", label: st.length ? st[0] : k}];
-        out.push({v: "", label: "all: " + st.join(", ")});
-        st.forEach(function (s) { out.push({v: k + "|" + s, label: s, c: k, s: s}); });
-        return out;
-      }
-      out.push({v: "", label: "all"});
-      cs.forEach(function (k) {
-        var st = realStates(k);
-        if (st.length < 2) return out.push({v: k + "|", label: st.length ? st[0] + ", " + k : k, c: k});
-        out.push({v: k + "|", label: "all of " + k, c: k, group: k});
-        st.forEach(function (s) { out.push({v: k + "|" + s, label: s, c: k, s: s, group: k}); });
-      });
+    var NO_COUNTRY = "(none)";   // FS.country sentinel: every box unticked, so nothing matches (empty = no filter)
+    // the countries in view: the ticked ones, or all of them when none is ticked
+    function countriesInView() {
+      var all = countries(), sel = FS().country || [];
+      return sel.length ? all.filter(function (k) { return sel.indexOf(k) >= 0; }) : all;
+    }
+    // the states offered: only once a country is picked (or the page covers just one), and only for countries that have states (the United States, say)
+    function stateChoices() {
+      var cs = countriesInView(), out = [];
+      if (!FS().country.length && cs.length > 1) return out;
+      cs.forEach(function (k) { out = out.concat(realStates(k)); });
       return out;
     }
-    function whereValue() { return FS().country ? FS().country + "|" + FS().state : ""; }
-    // the where picker, each choice with its live line + item count under the other filters (the unit the other pickers count)
-    function renderWhere() {
-      var sel = $("f-where");
-      if (!sel) return;
-      var q = FS().q.trim().toLowerCase(), per = plants().map(function (p) {
-        var n = 0;
-        p.lines.forEach(function (l) { if (A.match(l, p, FS(), "where", q)) n++; });
-        p.items.forEach(function (it) { if (A.match(it, p, FS(), "where", q)) n++; });
-        return n;
-      });
-      function count(o) {
-        var n = 0;
-        plants().forEach(function (p, i) { if ((!o.c || p.country === o.c) && (!o.s || p.state === o.s)) n += per[i]; });
-        return n;
-      }
-      var h = "", group = null;
-      whereOptions().forEach(function (o) {
-        if ((o.group || null) !== group) { h += (group ? "</optgroup>" : "") + (o.group ? '<optgroup label="' + esc(o.group) + '">' : ""); group = o.group || null; }
-        h += '<option value="' + esc(o.v) + '">' + esc(o.label) + " (" + count(o) + ")</option>";
-      });
-      sel.innerHTML = h + (group ? "</optgroup>" : "");
-      sel.value = whereValue();
+    // ticked values in the filter, leaving out the nothing-ticked sentinel
+    function picked(v) { return (v || []).filter(function (x) { return x !== NO_COUNTRY; }); }
+    // drop a route's country or state that is not on this page
+    function whereValid() {
+      var fs = FS(), all = countries(), sts = stateChoices();
+      return picked(fs.country).every(function (k) { return all.indexOf(k) >= 0; }) && picked(fs.state).every(function (st) { return sts.indexOf(st) >= 0; });
     }
-    // header: what the page covers, in words, with its plant count. It does not follow the filters: the where picker shows the narrowing
+    // one checkbox menu (the same as the pipelines reviewer's country menu): any ticked value matches, none ticked is no filter, each with its live count under the other filters
+    function checkMenu(id, label, values, field, counts) {
+      var box = $(id), fs = FS(), sel = fs[field] || [], n = sel.length, was = box.querySelector("details"), open = was && was.open;
+      box.hidden = !values.length;
+      if (box.hidden) return;
+      box.innerHTML = '<details class="cdrop"' + (open ? " open" : "") + "><summary>" + label + '</summary><div class="cmenu"><button type="button" class="ctoggle">' + (!n || picked(sel).length === values.length ? "deselect all" : "select all") + "</button>" +
+        values.map(function (k) { return '<label class="check"><input type="checkbox" value="' + esc(k) + '"' + (!n || sel.indexOf(k) >= 0 ? " checked" : "") + "> " + esc(k) + " (" + counts[k] + ")</label>"; }).join("") + "</div></details>";
+    }
+    // the country and state menus; the state menu shows once a country that has states is in view
+    function renderCountries() {
+      var fs = FS(), q = fs.q.trim().toLowerCase(), all = countries(), sts = stateChoices(), cc = {}, sc = {};
+      all.forEach(function (k) { cc[k] = 0; });
+      sts.forEach(function (k) { sc[k] = 0; });
+      plants().forEach(function (p) {
+        p.lines.concat(p.items).forEach(function (o) {
+          if (A.match(o, p, fs, "country", q)) cc[p.country]++;
+          if (p.state in sc && A.match(o, p, fs, "state", q)) sc[p.state]++;
+        });
+      });
+      checkMenu("f-country", "country", all, "country", cc);
+      checkMenu("f-state", "state", sts, "state", sc);
+    }
+    // header: every country as a box, alphabetical, with the plant count. Countries the filter leaves out are grayed; a click ticks or unticks that country. The states show the same way whenever the state menu does
     function renderScope() {
       var el = $("scope");
       if (!el || !D()) return;
-      var n = plants().filter(function (p) { return !p.statewide; }).length;
-      el.innerHTML = '<span class="where">' + esc(countries().map(placeName).join("; ")) + "</span> &middot; " + plural(n, "plant");
+      var fs = FS(), inView = countriesInView();
+      // the plant count follows the country and state boxes: a plant counts when its country is ticked and, if states are narrowed, its state is too
+      var n = plants().filter(function (p) {
+        if (p.statewide) return false;
+        if (fs.country.length && fs.country.indexOf(p.country) < 0) return false;
+        return !fs.state.length || fs.state.indexOf(p.state) >= 0;
+      }).length;
+      function box(kind, name, tip, on) {
+        return '<span class="cbox' + (on ? "" : " off") + '" data-kind="' + kind + '" data-v="' + esc(name) + '"' + tipAttrs(tip + " (click to " + (on ? "remove" : "add") + ")") + ">" + esc(name) + "</span>";
+      }
+      function sorted(xs) { return xs.slice().sort(function (a, b) { return a.localeCompare(b); }); }
+      el.innerHTML = sorted(countries()).map(function (k) { return box("country", k, "country filter: " + k, inView.indexOf(k) >= 0); }).join("") +
+        (stateChoices().length ? sorted(stateChoices()).map(function (st) { return box("state", st, "state filter: " + st, !fs.state.length || fs.state.indexOf(st) >= 0); }).join("") : "") +
+        '<span class="nplants">' + plural(n, "plant") + "</span>";
+      el.onclick = function (e) {
+        var b = e.target.closest && e.target.closest(".cbox[data-kind]");
+        if (!b) return;
+        var f = FS(), v = b.getAttribute("data-v"), flip = function (xs) { return xs.indexOf(v) >= 0 ? xs.filter(function (k) { return k !== v; }) : xs.concat([v]); };
+        if (b.getAttribute("data-kind") === "state") {
+          var left = flip(f.state.length ? picked(f.state) : stateChoices());   // [NO_COUNTRY] is every box unticked, so it must stay distinct from empty (all)
+          f.state = left.length === stateChoices().length ? [] : left.length ? left : [NO_COUNTRY];
+        } else {
+          var keep = flip(countriesInView());
+          f.country = keep.length === countries().length ? [] : keep.length ? keep : [NO_COUNTRY];
+          var ok = stateChoices();
+          f.state = picked(f.state).filter(function (st) { return ok.indexOf(st) >= 0; });
+        }
+        A.changed();
+      };
     }
 
     // ---- checklist groups ----
@@ -141,12 +166,26 @@
       (D().groups || []).forEach(function (g) { out[String(g.id)] = {total: 0, open: 0, pm: 0, rows: {}}; });
       A.LINES.concat(A.ITEMS).forEach(function (o) {
         var gid = groupOf(o), s = out[gid] || (out[gid] = {total: 0, open: 0, pm: 0, rows: {}});
+        if (!A.counted(o)) return;
+        var open = A.isOpen(o);
         s.total++;
-        if (isOpen(o)) s.open++;
+        if (open) s.open++;
         if (o.pm_flag) s.pm++;
-        (o.checks || []).forEach(function (n) { s.rows[n] = s.rows[n] || {total: 0, open: 0}; s.rows[n].total++; if (isOpen(o)) s.rows[n].open++; });
+        (o.checks || []).forEach(function (n) { s.rows[n] = s.rows[n] || {total: 0, open: 0}; s.rows[n].total++; if (open) s.rows[n].open++; });
       });
       return out;
+    }
+    // captive power: the records that tick checklist rows 6 and 44 (captive plants at LNG terminals) and row 39 (gas-fired data centers, US only), selected together
+    var CAPTIVE_ROWS = [6, 39, 44];
+    function isCaptive(o) { return (o.checks || []).some(function (n) { return CAPTIVE_ROWS.indexOf(n) >= 0; }); }
+    function captiveStats() {
+      var s = {total: 0, open: 0};
+      A.LINES.concat(A.ITEMS).forEach(function (o) {
+        if (!isCaptive(o) || !A.counted(o)) return;
+        s.total++;
+        if (A.isOpen(o)) s.open++;
+      });
+      return s;
     }
     function pmCount() {
       return A.LINES.concat(A.ITEMS).filter(function (o) { return o.pm_flag; }).length + plants().filter(function (p) { return p.pm_flag; }).length;
@@ -163,7 +202,13 @@
     }
     // the left pane in checklist mode: one row per QC/Country checklist group with how much of it is still open; a click filters the plants to that group. A group with nothing open gets a check mark.
     function renderChecklist() {
-      var gs = groupStats(), h = [], closeout = S.panel === "closeout";
+      var gs = groupStats(), h = [], closeout = S.panel === "closeout", cs = captiveStats();
+      if (cs.total) {
+        h.push('<li data-captive="1" class="grp captive' + (FS().captive ? " sel" : "") + (!cs.open ? " done" : "") + '"' +
+          tipAttrs("captive power, rows " + CAPTIVE_ROWS.join(", ") + ": captive plants at LNG terminals (rows 6 and 44) and gas-fired data centers (row 39, US only). Click to list them together") + ">" +
+          '<div class="pname">' + (!cs.open ? "✓ " : "") + 'captive power</div><div class="pmeta"><span class="grow">rows ' + CAPTIVE_ROWS.join(", ") + "</span>" +
+          (cs.open ? '<span class="n todo">' + cs.open + " open of " + cs.total + "</span>" : '<span class="n">' + cs.total + " &middot; done</span>") + "</div></li>");
+      }
       (D().groups || []).forEach(function (g) {
         var gid = String(g.id), s = gs[gid] || {total: 0, open: 0, pm: 0, rows: {}};
         if (S.hideDone && s.total && !s.open && !g.panel && FS().group !== gid) return;
@@ -181,6 +226,13 @@
           (rows.length ? '<div class="grows">' + rows.join(" ") + "</div>" : "") + "</li>");
       });
       $("pipes").innerHTML = h.join("");
+    }
+    // a click on the captive power chip: filter to its rows, decided or not, and show the plants
+    function selectCaptive() {
+      FS().captive = !FS().captive;
+      if (FS().captive) FS().decision = "";
+      A.changed();
+      setView("plants");
     }
     // a click on a checklist group: filter the plants to it and show them
     function selectGroup(gid) {
@@ -206,9 +258,72 @@
       var p = plants()[l._p], sc = l.sibling_current || {};
       var txt = ids.map(function (id) {
         var u = unitOf(p, id), nm = u && u.unit_name ? u.unit_name : id;
-        return nm + (blankv(sc[id]) ? " (blank now)" : " (now " + sc[id] + ")");
+        var v = sc[id];
+        if (v && typeof v === "object") {
+          var has = !blankv(v.Latitude) && !blankv(v.Longitude);
+          return nm + (has ? " (now " + v.Latitude + ", " + v.Longitude + (blankv(v["Location accuracy"]) ? "" : ", " + v["Location accuracy"]) + ")" : " (blank now)");
+        }
+        return nm + (blankv(v) ? " (blank now)" : " (now " + v + ")");
       }).join(", ");
       return '<tr class="note"><td></td><td colspan="3"><div class="faint">the same edit lands on the other unit rows of this plant: ' + esc(txt) + "</div></td></tr>";
+    }
+    // ---- location block: two satellite patches (Esri World Imagery, zoom 16, a 2 by 2 grid of tiles) with a crosshair ----
+    var ESRI_TILE = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+    var ESRI_ATTRIBUTION = "Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community";
+    var LOC_ZOOM = 16;
+    var METHOD_WORDS = {address: "placed from an address", site_reference: "placed from a site reference in a document",
+                        dataset: "taken from a dataset point", map: "georeferenced from a map in a document",
+                        imagery: "placed from the satellite picture of the plant"};
+    // Web Mercator tile coordinates of a point, the same math as scripts/geo.py tile_xy
+    function tileXY(lat, lon, z) {
+      var n = Math.pow(2, z), r = Math.max(-85.05112878, Math.min(85.05112878, lat)) * Math.PI / 180;
+      return {x: (lon + 180) / 360 * n, y: (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n};
+    }
+    function locPoint(pt) { return pt && typeof pt.lat === "number" && typeof pt.lon === "number"; }
+    function locPane(title, pt) {
+      var h = '<div class="pane"><div class="ttl">' + esc(title) + "</div>";
+      if (!locPoint(pt)) return h + '<div class="nopt">no coordinate in GEM yet</div></div>';
+      var t = tileXY(pt.lat, pt.lon, LOC_ZOOM), x0 = Math.floor(t.x - 0.5), y0 = Math.floor(t.y - 0.5), imgs = "";
+      for (var dy = 0; dy < 2; dy++) {
+        for (var dx = 0; dx < 2; dx++) {
+          var u = ESRI_TILE.replace("{z}", LOC_ZOOM).replace("{y}", y0 + dy).replace("{x}", x0 + dx);
+          imgs += '<img loading="lazy" alt="" src="' + esc(u) + '" style="left:' + (dx * 50) + "%;top:" + (dy * 50) + '%">';
+        }
+      }
+      var cx = (t.x - x0) / 2 * 100, cy = (t.y - y0) / 2 * 100;
+      h += '<div class="tiles">' + imgs + '<span class="cross h" style="left:' + cx.toFixed(2) + "%;top:" + cy.toFixed(2) + '%"></span>' +
+        '<span class="cross v" style="left:' + cx.toFixed(2) + "%;top:" + cy.toFixed(2) + '%"></span></div>';
+      h += '<div class="coord">' + esc(pt.lat.toFixed(5) + ", " + pt.lon.toFixed(5)) + (pt.accuracy ? " (" + esc(pt.accuracy) + ")" : "");
+      if (pt.satellite) h += ' <a href="' + esc(pt.satellite) + '" target="_blank" rel="noopener">satellite</a>';
+      if (pt.pin) h += ' <a href="' + esc(pt.pin) + '" target="_blank" rel="noopener">pin</a>';
+      return h + "</div></div>";
+    }
+    function movedText(m) {
+      if (m == null || m === "") return "GEM had no point";
+      m = Number(m);
+      return "moved " + (m >= 1000 ? (m / 1000).toFixed(1) + " km" : Math.round(m) + " m");
+    }
+    function locationBlock(loc) {
+      var cur = loc.current || {}, pro = loc.proposed || {};
+      var cap = [METHOD_WORDS[loc.method] || loc.method, movedText(loc.moved_m)];
+      if (cur.accuracy && pro.accuracy && cur.accuracy !== pro.accuracy) cap.push(cur.accuracy + " to " + pro.accuracy);
+      else if (pro.accuracy) cap.push(pro.accuracy);
+      var h = '<div class="loc"><div class="panes">' + locPane("now", cur) + locPane("proposed", pro) + "</div>" +
+        '<div class="cap">' + cap.filter(Boolean).map(esc).join(", ") + "</div>" +
+        '<div class="attr">' + esc(ESRI_ATTRIBUTION) + "</div>";
+      if (loc.image) {
+        h += '<div class="mapimg"><a href="' + esc(loc.image) + '" target="_blank" rel="noopener"><img loading="lazy" alt="saved map render" src="' + esc(loc.image) + '"></a>';
+        var cps = loc.control_points || [];
+        if (cps.length) {
+          h += '<table class="cpts"><tr><th>feature</th><th>pixel</th><th>lat, lon</th></tr>' + cps.map(function (c) {
+            var px = c.px || [];
+            return "<tr><td>" + esc(c.feature || "") + "</td><td>" + esc(px.join(", ")) + "</td><td>" + esc(typeof c.lat === "number" && typeof c.lon === "number" ? c.lat.toFixed(5) + ", " + c.lon.toFixed(5) : "") + "</td></tr>";
+          }).join("") + "</table>";
+        }
+        if (loc.fit_m != null) h += '<div class="attr">fit error ' + esc(loc.fit_m) + " m</div>";
+        h += "</div>";
+      }
+      return h + "</div>";
     }
     function newRowTable(vals, refs, l) {
       vals = vals || {}; refs = refs || {};
@@ -286,7 +401,8 @@
     // Save an ask-the-PM flag (line, item or plant). The box re-renders when the store confirms.
     function saveFlag(target, rec) {
       var Store = A.Store;
-      if (!Store.caps.decide || !Store.flag) return A.notYet();
+      var canFlag = Store.caps.flag !== undefined ? !!Store.caps.flag : typeof Store.flag === "function";
+      if (!Store.caps.decide || !canFlag || typeof Store.flag !== "function") return A.notYet();
       var k = "pm:" + (rec.key || rec.pid);
       if (S.saving[k]) return;
       S.saving[k] = true;
@@ -510,7 +626,7 @@
         "<h4>good to know</h4>" +
         "<ul>" +
         "<li><b>Undo:</b> click the pressed button again, or press <kbd>u</kbd>. Nothing is deleted; the log just records the undo. Unticking <b>ask the PM</b> works the same way.</li>" +
-        "<li>A grayed change is already decided. A bright change still needs you.</li>" +
+        "<li>A grayed change is already decided or held. A bright change still needs you.</li>" +
         "<li>Press <kbd>?</kbd> for the keyboard shortcuts.</li>" +
         "</ul>";
     }
@@ -544,25 +660,27 @@
       hideFields: ["gem_unit_id", "unit_name", "group", "group_label", "checks", "monitor_kind", "pm_flag", "pm_note", "pm_by", "duplicate_of", "concern_type_raw", "plant_name"],
       itemFacets: ["group"],
       store: {flag: "/api/flag"},
-      QK: {decision: "d", kind: "k", group: "g", tier: "t", dir: "dir", column: "col", q: "q", country: "c", state: "st", by: "by", status: "status", pm: "pm"},
+      QK: {decision: "d", kind: "k", group: "g", tier: "t", dir: "dir", column: "col", q: "q", country: "c", state: "st", by: "by", status: "status", pm: "pm", captive: "cap"},
 
       slots: {
-        "filters": '<label><span data-tip="the country and state this page covers; pick one state to see only its plants">where</span> <select id="f-where"></select></label>' +
-          '<label data-after="f-kind"><span data-tip="the group of the GOGPT QC/Country checklist every change and item is sorted into; pick one to see everything in it, decided or not">checklist</span> <select id="f-group"></select></label>' +
-          '<label class="check" data-after="f-tier" data-tip="everything flagged with the ask-the-PM box, whatever its decision"><input type="checkbox" id="f-pm"> ask the PM</label>',
-        "filters-more": '<label class="check" data-tip="plants whose Status is changed by a staged edit"><input type="checkbox" id="f-status"> status changes only</label>'
+        "filters": '<span id="f-country" class="countries" role="group" aria-label="country" hidden></span><span id="f-state" class="countries" role="group" aria-label="state" hidden></span>' +
+          '<label data-after="f-kind"><span data-tip="the group of the GOGPT QC/Country checklist every change and item is sorted into; pick one to see everything in it, decided or not">checklist</span> <select id="f-group"></select></label>' ,
+        "filters-more": '<label class="check" data-tip="plants whose Status is changed by a staged edit"><input type="checkbox" id="f-status"> status changes only</label>' +
+          '<label class="check" data-tip="everything flagged with the ask-the-PM box, whatever its decision"><input type="checkbox" id="f-pm"> ask the PM</label>'
       },
 
       // ---- filters ----
-      defaults: function () { return {group: "", country: "", state: "", status: false, pm: false}; },
+      defaults: function () { return {group: "", country: [], state: [], status: false, pm: false, captive: false}; },
       // items (questions, watch items, entity checks) sit beside the edits whenever a checklist group or the ask-the-PM filter is on
-      itemsInView: function (fs) { return !!(fs.group || fs.pm); },
+      itemsInView: function (fs) { return !!(fs.group || fs.pm || fs.captive); },
       match: function (o, p, fs, skip) {
         var item = !!o._item;
         if (skip !== "group" && fs.group && groupOf(o) !== fs.group) return false;
         if (fs.pm && !flagged(o, p)) return false;
+        if (fs.captive && !isCaptive(o)) return false;
         if (fs.status && (item || o.column !== "Status")) return false;
-        if (skip !== "where" && fs.country && (p.country !== fs.country || (fs.state && p.state !== fs.state))) return false;
+        if (skip !== "country" && fs.country.length && fs.country.indexOf(p.country) < 0) return false;
+        if (skip !== "state" && fs.state.length && fs.state.indexOf(p.state) < 0) return false;
         return true;
       },
       tally: function (p) {
@@ -573,7 +691,8 @@
       },
       facetVal: function (o, facet) { return facet === "group" ? groupOf(o) : o[facet]; },
       renderChips: function () {
-        renderWhere();
+        renderScope();
+        renderCountries();
         var groups = D().groups || [], gids = groups.map(function (g) { return String(g.id); }), gl = {};
         groups.forEach(function (g) { gl[String(g.id)] = (g.id === "other" ? "" : g.id + " · ") + g.label; });
         if (gids.indexOf("other") < 0 && A.LINES.concat(A.ITEMS).some(function (o) { return groupOf(o) === "other"; })) { gids.push("other"); gl.other = "other"; }
@@ -581,21 +700,40 @@
       },
       selectFilters: ["group"],
       initFilters: function () {
+        // a menu's select-all button and its checkboxes; all ticked is the same as none ticked
+        function menu(id, field, values) {
+          var box = $(id);
+          box.onclick = function (e) {
+            if (!e.target.classList.contains("ctoggle")) return;
+            e.stopPropagation();
+            var on = Array.prototype.every.call(box.querySelectorAll("input[type=checkbox]"), function (i) { return i.checked; });
+            FS()[field] = on ? [NO_COUNTRY] : [];
+            after(field);
+          };
+          box.onchange = function () {
+            var boxes = box.querySelectorAll("input[type=checkbox]"), sel = Array.prototype.filter.call(boxes, function (i) { return i.checked; }).map(function (i) { return i.value; });
+            FS()[field] = sel.length === boxes.length ? [] : sel.length ? sel : [NO_COUNTRY];
+            after(field);
+          };
+        }
+        // changing the countries can take the state menu away: drop states that are no longer offered
+        function after(field) {
+          if (field === "country") { var ok = stateChoices(); FS().state = picked(FS().state).filter(function (st) { return ok.indexOf(st) >= 0; }); }
+          A.changed();
+        }
+        menu("f-country", "country");
+        menu("f-state", "state");
+        document.addEventListener("click", function (e) {
+          Array.prototype.forEach.call(document.querySelectorAll("#f-country details, #f-state details"), function (d) { if (d.open && !d.contains(e.target)) d.open = false; });
+        });
         $("f-status").onchange = function () { FS().status = this.checked; A.changed(); };
         // "ask the PM" matches flagged lines and items whatever their decision: drop the undecided-only default
         $("f-pm").onchange = function () { FS().pm = this.checked; if (FS().pm && FS().decision === "undecided") FS().decision = ""; A.changed(); };
-        $("f-where").onchange = function () {
-          var i = this.value.indexOf("|");
-          FS().country = i < 0 ? "" : this.value.slice(0, i);
-          FS().state = i < 0 ? "" : this.value.slice(i + 1);
-          A.changed();
-        };
       },
       syncControls: function () {
         var fs = FS();
-        // a route from before the where picker (several ticked states) or for a place not on the page falls back to the whole page
-        if (!whereOptions().some(function (o) { return o.v === whereValue(); })) { fs.country = ""; fs.state = ""; }
-        $("f-where").value = whereValue();
+        // a route from before the where buttons (several ticked states) or for a place not on the page falls back to the whole page
+        if (!whereValid()) { fs.country = []; fs.state = []; }
         $("f-status").checked = fs.status;
         $("f-pm").checked = fs.pm;
       },
@@ -604,6 +742,7 @@
         if (when === "before") {
           if (fs.group) chipFn("group", "checklist: " + groupLabel(fs.group), false);
           if (fs.pm) chipFn("pm", "ask the PM", false);
+          if (fs.captive) chipFn("captive", "captive power (rows " + CAPTIVE_ROWS.join(", ") + ")", false);
         } else if (fs.status) chipFn("status", "status changes only", true);
       },
       progressNote: function () { var pm = pmCount(); return pm ? " &middot; " + pm + " flagged for the PM" : ""; },
@@ -638,6 +777,7 @@
           '</span><span class="grow"></span>' + x.badge + '</div>' + (x.dots ? '<div class="dots">' + x.dots + "</div>" : "");
       },
       onQueueClick: function (e) {
+        if (e.target.closest("li[data-captive]")) return selectCaptive();
         var g = e.target.closest("li[data-g]");
         if (g) selectGroup(g.getAttribute("data-g"));
       },
@@ -652,13 +792,15 @@
           else facts.push(chip(l.publishers + " publishers"));
         }
         if (l.independent) facts.push(chip("second source", "ok", "a second independent source was recorded for this value"));
-        return h + (facts.length ? '<div class="facts">' + facts.join(" ") + "</div>" : "");
+        h += facts.length ? '<div class="facts">' + facts.join(" ") + "</div>" : "";
+        return h + (l.location ? locationBlock(l.location) : "");
       },
       lineChips: function (l, base) {
         var chips = [];
         if (l.kind === "new_row") chips.push(chip(A.KIND_LABEL.new_row, "newrow"));
         if (l.kind === "plant") chips.push(chip("plant-wide", "oo", "a plant-level field: the export repeats it on every unit row, so the edit lands on every unit row of this plant"));
         chips = chips.concat(base);
+        if (l.location && l.location.needs_review) chips.push(chip("needs a second look", "single", "the researcher was not sure of this point: check it against the satellite picture before accepting"));
         chips.push(groupChip(l));
         if (l.irp) chips.push(irpChip(l));
         if (l.pm_flag) chips.push(pmChip(l));
@@ -728,7 +870,9 @@
 
       // ---- the card ----
       cardContext: function (p) {
-        return [p.statewide && "<b>statewide notes, not one plant</b>", untracked(p) && !p.statewide && "<b>not in GEM yet: a candidate plant</b>",
+        var dbId = !p.statewide && !untracked(p) && /^[A-Za-z]?(\d+)$/.exec(String(p.pid || ""));
+        return [dbId && '<a href="https://gem-project-db.herokuapp.com/projects/edit/' + dbId[1] + '" target="_blank" rel="noopener"' + tipAttrs("open this plant in the GEM project database") + ">project db ↗</a>",
+                /^https?:\/\//.test(p.wiki || "") && '<a href="' + esc(p.wiki) + '" target="_blank" rel="noopener"' + tipAttrs("open this plant's page on the GEM wiki") + ">wiki ↗</a>", p.statewide && "<b>statewide notes, not one plant</b>", untracked(p) && !p.statewide && "<b>not in GEM yet: a candidate plant</b>",
                 p.state && esc(p.state), p.units.length && p.units.length + " unit" + (p.units.length === 1 ? "" : "s") + " in the export",
                 A.tierSummary(p), '<span class="pmplant">' + pmBox(p, "data-pmplant", p.pid) + "</span>"];
       },

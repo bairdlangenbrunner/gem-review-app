@@ -1,0 +1,7 @@
+{"id": "s1", "key": "star::a::W1:size", "kind": "fill", "star": "star", "on": true, "note": "a good one", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "s2", "key": "star::a::widget:W1", "kind": "widget", "star": "star", "on": true, "note": "whole widget", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "s3", "key": "star::a::widget:W1", "kind": "widget", "star": "star", "on": false, "note": "", "reviewer": "BL", "ts": "2026-10-09T10:02:00-04:00", "undecided": false}
+{"id": "s4", "key": "star::b::widget:W2", "kind": "widget", "star": "star", "on": true, "note": "keep an eye on it", "reviewer": "AL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "s5", "key": "star::b::W2:qa-1", "kind": "concern", "star": "star", "on": true, "note": "", "reviewer": "push", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "s6", "key": "star::b::W2:size-old", "kind": "fill", "star": "star", "on": true, "note": "starred under the old key", "reviewer": "AL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "s7", "key": "a::W1:size", "kind": "fill", "decision": "accept", "suggested_value": "", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:03:00-04:00", "undecided": false}

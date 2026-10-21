@@ -1,0 +1,6 @@
+{"id": "o1", "key": "a::W1:size", "kind": "fill", "decision": "hold", "suggested_value": "", "reference": "", "note": "the later call, written first", "reviewer": "BL", "ts": "2026-10-09T10:05:00-04:00", "undecided": false}
+{"id": "o2", "key": "a::W1:size", "kind": "fill", "decision": "accept", "suggested_value": "", "reference": "", "note": "the earlier call, written second", "reviewer": "AL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "o3", "key": "a::W1:color", "kind": "change", "decision": "reject", "suggested_value": "", "reference": "", "note": "14:30 UTC is 10:30 in New York", "reviewer": "BL", "ts": "2026-10-09T14:30:00Z", "undecided": false}
+{"id": "o4", "key": "a::W1:color", "kind": "change", "decision": "accept", "suggested_value": "", "reference": "", "note": "", "reviewer": "AL", "ts": "2026-10-09T10:10:00-04:00", "undecided": false}
+{"id": "o5", "key": "b::W2:qa-1", "kind": "concern", "call": "", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:09:00-04:00", "undecided": true}
+{"id": "o6", "key": "b::W2:qa-1", "kind": "concern", "call": "confirmed", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:02:00-04:00", "undecided": false}

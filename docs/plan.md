@@ -4,15 +4,15 @@ Approved by Baird on 2026-10-08 after the GOGPT and pipelines review apps kept d
 
 ## What lives where
 
-**Here, shared core (`review_core/`)**: the page (`web/index.html`, `web/app.js`, `web/style.css`), the three store adapters (`web/static_store.js` for the single-file page and the artifact database, `web/gas.js` for Apps Script, and the loopback adapter inside `app.js`), the generic decision log (`store.py`: append-only `review_log.jsonl`, derived `review_decisions.json`, latest wins, undo, initials, atomic write with rollback, validation), the loopback server (`server.py`) with route hooks, and the single-file builder (`build_static.py`). Also the page registry logic (`pages.py`: content-hash fingerprints of what a live page was built from, the staleness check with plain-word reasons, `mark_published`) and the Claude Code hook output built on it (`hooks.py`); see `docs/refresh.md`.
+**Here, shared core (`review_core/`)**: the page (`web/index.html`, `web/app.js`, `web/style.css`), the store adapters (`web/static_store.js` for the single-file page and the artifact database, and the loopback adapter inside `app.js`), the generic decision log (`store.py`: append-only `review_log.jsonl`, derived `review_decisions.json`, latest wins, undo, initials, atomic write with rollback, validation), the loopback server (`server.py`) with route hooks, and the single-file builder (`build_static.py`). Also the page registry logic (`pages.py`: content-hash fingerprints of what a live page was built from, the staleness check with plain-word reasons, `mark_published`) and the Claude Code hook output built on it (`hooks.py`); see `docs/refresh.md`. Tests for the core live in `tests/` (a synthetic tracker config, no researcher repo needed).
 
-**Here, per tracker (`trackers/<name>/`)**: a Python config (`config.py`: the `TrackerConfig` below) and a page extension (`web/ext.js`, `web/ext.css`) registered through the hook points below. Nothing in a tracker folder is reachable without the core, and the core never names a tracker.
+**Here, per tracker (`trackers/<name>/`)**: a Python config (`config.py`: the `TrackerConfig` below) and a page extension (`web/ext.js`, `web/ext.css`) registered through the hook points below. Pipelines also keeps the Apps Script adapter there (`web/gas.js`, `window.GasStore`, which `app.js` picks first); it names pipeline fields, and the Google web app path it serves has been parked since 2026-10-09. Nothing in a tracker folder is reachable without the core, and the core never names a tracker.
 
 **In each researcher repo (`review_app/`)**: `review_data.py` (builds the dataset from that tracker's staging files; the only place that knows the staged record shapes), the ledger and its Google store (`ledger.py`, `pull.py`, `import_log.py`, `google.json`), workbook and push consumers (`build_review_package.py --decisions`, pipelines `push.py`, `publish.py`, `gas_push.py`), `artifacts.json` (the registry of live pages, with a `published` block per page) and `build_all.py` (`--check`, build, `--mark-published`, `--hook`, over `review_core.pages` with that repo's adapter), `.claude/settings.json` (the hooks), and thin shims: `store.py`, `server.py`, `build_static.py` that bind the core to the tracker config so every existing import (`from review_app import store`, `import store`) and every existing test keeps working.
 
 **Here, scripts (`scripts/check_consumers.py`)**: runs the two sibling repos' page checks and hooks, so a session opened here hears about stale live pages after a change to the shared interface.
 
-**Not moved**: anything that reads a researcher repo's staging files or talks to Google. The core never imports from a researcher repo.
+**Not moved**: anything that reads a researcher repo's staging files, and each tracker's half of the Google store code. The shared halves of `pull.py`, `ledger.py` and `import_log.py` and the `server.py` and `build_all.py` command lines now live in the core, and each repo's file keeps its settings and rules: `pull.py` its `google.json`; `ledger.py` its `COLS`, `ORIGINS`, `row_of`, `scope_of` and CLI; `import_log.py` what a record must match and how it picks the dataset; `build_all.py` its registry, adapter and build step. The core never imports from a researcher repo; the bound functions reach the repo's own `gws`, `store` and `pull` through the module that bound them.
 
 ## Layout
 
@@ -24,16 +24,21 @@ gem-review-app/
     __init__.py
     config.py                  TrackerConfig and the hook signatures
     store.py                   generic log logic, parameterized by a TrackerConfig
-    server.py                  loopback server; tracker adds routes and caps
+    server.py                  loopback server; tracker adds routes and caps; the shared server command line
+    pages.py                   page registry: fingerprints, staleness check, mark_published, the build_all.py command line, the file cache
+    hooks.py                   Claude Code hook output, a JSON contract (see docs/refresh.md)
+    pull.py                    mirror the Google decision store into the staging dirs
+    ledger.py                  the decision ledger: verified, chunked appends to the store's log tab
+    import_log.py              bring artifact-page decisions into the ledger
     build_static.py            single-file page builder (blob form)
     web/index.html             the one page skeleton, with named slots
     web/app.js                 core page logic; exposes window.ReviewApp and ReviewApp.define()
     web/style.css              shared styles and themes
     web/static_store.js        single-file and artifact database adapter
-    web/gas.js                 Apps Script adapter
+  scripts/check_consumers.py   runs the sibling repos' page checks and hooks
   trackers/
     gogpt/   __init__.py  config.py  web/ext.js  web/ext.css
-    pipelines/ __init__.py  config.py  web/ext.js  web/ext.css
+    pipelines/ __init__.py  config.py  web/ext.js  web/ext.css  web/gas.js (Apps Script adapter, parked)
   tests/                       core tests on a synthetic tracker config, no researcher repo needed
 ```
 
@@ -75,27 +80,29 @@ The fields above are the plan's shorthand; `review_core/config.py` is the author
 
 ## Page hook points (JavaScript)
 
-`app.js` builds `window.ReviewApp` and exports `define(tracker)`. `ext.js` loads after `app.js` and before boot, and calls `ReviewApp.define({...})` with any of these. Every hook is optional; the core behaves as the pipelines app does today without them.
+`app.js` builds `window.ReviewApp` and exports `define(tracker)`. `ext.js` loads after `app.js` and before boot, and calls `ReviewApp.define({...})` with any of these (`define` also takes a function that gets the helper API `A` and returns the object). Every hook is optional; the core behaves as the pipelines app does today without them. A vocabulary key (`line_kinds`, `item_kinds`, `item_calls`, `other_calls`, `note_required`, `info_kinds`, `references`, `cards_key`, `name`) that `ext.js` leaves out comes from the built page's tracker block (`TrackerConfig.page_block()`). The core defaults for item calls are empty: every tracker supplies its own.
 
-- `id`, `title`, `QK` (filter keys in the hash), `defaults()` for filter state, `facets(line, item)` for extra filter dimensions and `match(line, item, filters)` for extra predicates.
-- `slots`: HTML strings for named slots in `index.html`: `header-buttons`, `filters`, `filters-more`, `queue-pane` (GOGPT checklist tabs), `card-extra`.
-- `prepare(card)` per-card derived fields; `queueRow(card)` the queue row text; `cardContext(card)` the context line; `groupLines(card)` how lines group on the card (units vs segments).
-- `lineBody(line)` dispatch by kind for the body; `lineChips(line)` extra chips; `lineControls(line)` extra controls (accept candidate, PM box).
-- `itemHead(item)`, `itemBody(item)`, `itemCalls(kind)` vocabularies, `noteRequired(kind, call)`.
-- `applyRecord(record, line, item)` extras when a saved or remote record lands (machine records, drift, flags).
-- `keys`, `help`, `info` text blocks; `firstRef(line)`, `suggestPrefill(line)`.
-- `onReload(data)`, `onBoot()`, `poll()` for live state.
+- Identity and vocabulary: `id`, `name`, `cards_key`, `words` (the card and line nouns), `line_kinds`, `item_kinds`, `item_calls`, `other_calls`, `note_required`, `info_kinds`, `kind_label`, `kind_tip`, `call_label`, `call_help`, `call_hint`, `sev_label`, `sev_tip`, `tier_tip`, `body` (kind to line renderer), `hideFields` (item fields left out of the details table).
+- Filters and routes: `QK` (filter keys in the hash, in hash order), `defaults()` for filter state, `selectFilters` (extra select filters), `initFilters()`, `fillFilters()`, `syncControls()`, `renderChips()` and `activeChips(chip, "before" | "after")` for the chip row, `facetVal(o, facet)` the value a facet reads, `itemFacets` (facets whose counts include items), `itemsInView(filters)` (show items beside the lines), `match(o, card, filters, skip)` extra predicate, `counted(o)` (false for a line the page shows but does not count), `routeKey(data)` (browser storage key for the saved route; the core default is the tracker id plus the scope id), `routeEmpty` (how an empty multi-select is written in the hash), `routeArray(field, values)` (turns hash values back into filter state), `searchPlaceholder`.
+- `slots`: HTML strings for named slots in `index.html`: `header-buttons`, `filters`, `filters-more`, `queue-pane`, `card-extra`.
+- Queue and card head: `renderQueue()` (draws the whole queue pane; return true), `queueRow(card, i, parts)` the queue row, `prepare(card, index)` per-card derived fields, `tally(card)` extra per-card counts, `showPid(card)`, `pidTip`, `cardContext(card)` the context chips, `cardSub(card)` a line under the head, `cardPanel(panel)` a panel drawn in place of a card, `bulkButtons(card)` replaces the three bulk buttons, `groupLines(card, lines)` how lines group on the card.
+- Lines: `lineBody(line, card)` body by kind (return null to fall back), `lineDetails(line)`, `lineTitle(line)`, `lineWhere(line)`, `lineChips(line, chips)`, `lineClass(line)`, `dimmed(line)`, `lineButtons(line)` and `lineControls(line)` extra buttons and controls, `sevChip(line)`, `vmark(url, line)` the check mark on a link, `decisionText(line)`, `suggestPressed(line)`, `suggestPrefill(line)`, `suggestRef` (false hides the source link box), `noteBox(line)`, `noteRecord(line, record)` reshapes a re-saved note, `firstRef(line)`, `openRef(url, line)` opens a link the tracker's way.
+- Items: `itemHead(item)`, `itemBody(item)`, `itemWhere(item)`, `itemClass(item)`, `itemChips(item)`, `itemFacts(item)`, `itemControls(item)`, `itemNoteHint(item)`, `itemCalls(kind, item)` per-item calls, `noteRequired(kind, call, item)`, `itemGroup` (`{of, order, label...}` grouping and order), `groupCount(items, nOpen)`, `openLoneGroup` (false keeps a lone group closed), `kindLabel(o, labels)`, `kindTip(o, tips)`, `kindClass(item)`, `hideField(name, item)`, `fieldLabel(name)`.
+- Bulk accept: `bulkTargets(mode, line)` refuses a line (false, or a string naming a skip reason in `bulkSkip`), `bulkSkip` text per reason. The core modes are `bulk-minor`, `bulk-high` and `bulk-all`.
+- Records and reloads: `applyRecord(record, line, item, remote, machine)` takes a saved or remote record first (return true; `machine` is given, a record or null, when the store chose `record` by its speaker rules, and is the line's latest machine record), `afterSave(saved)`, `afterReload(data)`, `onReload(data)`.
+- Dialogs: `keys` (keyboard map additions), `help` (rows, or a function that edits them), `info` (HTML, or a function of the saved-where text), `progressItems` (false hides the item count), `progressNote()`, `progressHtml()`, `references` (false hides reference inputs).
+- Lifecycle and events: `onInit()`, `onBoot()`, `poll()`, `onCardClick(e)`, `onCardChange(e)`, `onQueueClick(e)` (the first two return true when they handled the event).
 - `store`: extra store methods and routes the adapters expose (`flag` for GOGPT; `refresh`, `push`, `showGeo` for pipelines).
 
 The core owns: severity and tier rendering, decisions and undo, the note box and its debounce, the suggest form, bulk accept, filters with facet counts and chips, hash routing, tip popovers, themes, the keyboard map, the help, info and progress dialogs, toast and banner, save → `Store.decide` → `applySaved` → `refilter` → `nextUndecided`, `prepare()` building `LINES`, `ITEMS`, `LINE_BY_KEY`, `ITEM_BY_KEY`, and `reload(data)`.
 
 ## Store interface (JavaScript)
 
-`caps {decide, refresh, push, flag}`, `load()`, `whoami()`, `decide(records)`, `item(records)`; optional `ready()`, `open(url)`, `showGeo(path)`, `refresh()`, `poll()`, `state`, `flag(records)`, and for the single-file adapter `mode: "static"`, `download()`, `logs()`. `app.js` picks `window.GasStore || window.StaticStore || loopback`.
+`caps {decide, refresh, push, flag}`, `load()`, `whoami()`, `decide(records)`, `item(records)`; optional `ready()`, `open(url)`, `showGeo(path)`, `refresh()`, `poll()`, `state`, `flag(records)`, and for the single-file adapter `mode: "static"`, `download()`, `logs()`, and `speak(key)`, `keysFor(key)`, `apply(o, group, record)`, which `applyRemote` uses to show a record that arrives after load by the store's speaker rules (a store without `speak` has its records laid on one at a time). `app.js` picks `window.GasStore || window.StaticStore || loopback` (`GasStore` comes from the pipelines-only `gas.js`, parked).
 
 ## Single-file page (blob form)
 
-The builder takes the pipelines form for every tracker: the dataset is gzip-compressed, base64-embedded, with a packed key index, and the page decompresses it at boot. The GOGPT inline-JSON form is retired. The built page holds, in order: the title, one `<style>` with `style.css` then the tracker `ext.css`, the body of `index.html` with its local script and link tags removed, the dataset blob (`<script type="application/octet-stream" id="review-blob">`, base64 of gzip `{data, index}`), a boot script `window.REVIEW_STATIC = {reviewer, built, ledger_url, tracker}` where `tracker` is `TrackerConfig.page_block()` (the plain-JSON vocabulary: kinds, calls, note rules, markers, caps), then `static_store.js`, `app.js` and the tracker `ext.js`. The data and settings come before the scripts so every script can read them as it loads. Artifact pages keep their capabilities (`db`, `user`, `downloads`) and their existing URLs; each researcher repo's `build_all.py` and `artifacts.json` drive the rebuild and republish.
+The builder takes the pipelines form for every tracker: the dataset is gzip-compressed, base64-embedded, with a packed key index, and the page decompresses it at boot. The GOGPT inline-JSON form is retired. The built page holds, in order: the title, one `<style>` with `style.css` then the tracker `ext.css`, the body of `index.html` with its local script and link tags removed, the dataset blob (`<script type="application/octet-stream" id="review-blob">`, base64 of gzip `{data, index, legacy}`), a boot script `window.REVIEW_STATIC = {reviewer, built, ledger_url, tracker}` where `tracker` is `TrackerConfig.page_block()` (the plain-JSON vocabulary: kinds, calls, note rules, markers, caps, and `rules`), then `static_store.js`, `app.js` and the tracker `ext.js`. The data and settings come before the scripts so every script can read them as it loads. `legacy` is `build_static.legacy_map()`: each line, item and marker key with the older keys the tracker's `legacy_keys` gives for it, so a call a browser logged under an older key still speaks for the line, by the same rule as `store.speaker`. `rules` is `store.page_rules()`: the request limits, the initials, email and web address patterns, and the line-kind and undo-reference rules, so `static_store.js` checks a record exactly as the store does without keeping its own copy of them. Artifact pages keep their capabilities (`db`, `user`, `downloads`) and their existing URLs; each researcher repo's `build_all.py` and `artifacts.json` drive the rebuild and republish.
 
 ## Asks from the researcher repos
 

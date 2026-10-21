@@ -1,0 +1,10 @@
+{"id": "l1", "key": "a::W1:size-old", "kind": "fill", "decision": "accept", "suggested_value": "", "reference": "", "note": "logged under the old key", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "l2", "key": "a::W1:color-old", "kind": "change", "decision": "accept", "suggested_value": "", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "l3", "key": "a::W1:color", "kind": "change", "decision": "reject", "suggested_value": "", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:02:00-04:00", "undecided": true}
+{"id": "l4", "key": "b::W2:size-old", "kind": "fill", "decision": "hold", "suggested_value": "", "reference": "", "note": "", "reviewer": "AL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "l5", "key": "b::W2:size", "kind": "fill", "decision": "accept", "suggested_value": "", "reference": "", "note": "", "reviewer": "push", "ts": "2026-10-09T10:02:00-04:00", "undecided": false}
+{"id": "l6", "key": "b::W2:color-old", "kind": "change", "decision": "accept", "suggested_value": "", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "l7", "key": "b::W2:color-older", "kind": "change", "decision": "reject", "suggested_value": "", "reference": "", "note": "", "reviewer": "AL", "ts": "2026-10-09T10:02:00-04:00", "undecided": false}
+{"id": "l8", "key": "a::W1:qa-1-older", "kind": "concern", "call": "dismissed", "reference": "", "note": "closed before the rename", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "l9", "key": "b::W2:qa-1-old", "kind": "concern", "call": "confirmed", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "l10", "key": "b::W2:qa-1-old", "kind": "concern", "call": "", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:02:00-04:00", "undecided": true}

@@ -11,7 +11,7 @@ Machine reviewers: "backend sync" (a refresh found the line already in the sheet
 
 What stays repo code in pipelines-researcher: the refresh (scripts/refresh_csvs.sh plus a dataset rebuild), the push plan and apply (push.py) and the `basis` stamp (review_data.basis). The routes below call the refresh and push through methods on the repo's App subclass, and answer 409 when the subclass does not have them.
 
-The single-file page index carries what the pipelines page store and the Apps Script server (Code.gs) read: per line r (sheet row), c (reference column), b (basis), d (default, "hold" when the line has none), v (covers) and x (concern answers); and at the top w (the backend cells each line was judged against, for the live drift check) and cmd (the commodity). index_entry fills what one line carries; index_extras adds x, w and cmd. pipelines-researcher's publish.py builds the same index for the Google page, and a test there checks the two agree.
+The single-file page index carries what the pipelines page store and the Apps Script server (Code.gs) read: per line r (sheet row), c (reference column), b (basis), d (default, "hold" when the line has none), v (covers) and x (concern answers); and at the top w (the backend cells each line was judged against, for the live drift check) and cmd (the commodity). index_entry fills what one line carries; index_extras adds x, w and cmd. pipelines-researcher's publish.py writes this same index (review_core.build_static.pack_index) for the parked Google page.
 
 Two behaviors moved to the shared core on the port (2026-10-08), neither pinned by a pipelines test: a line whose live call is not a suggest now shows an empty `suggested_value` (the pipelines overlay used to leave the value of an earlier suggest in place); and the reviewer-facing error texts for refresh and push keep their pipelines wording through the routes below.
 """
@@ -33,19 +33,64 @@ MACHINE_REVIEWERS = {"backend sync", "push"}
 INFO_KINDS = {"confirmed"}
 
 
-# ---- legacy keys -------------------------------------------------------------------
+# ---- keys --------------------------------------------------------------------------
+# A line or item key is `<dir>::<pid>|<sheet_row>|<colid>`. The colid is review_data's (`Capacity`, a multi-column fill `Capacity+CapacityUnits`), plus `#<class><n>` when one dir, ProjectID, row and colid held several records. These are the one place the shape is written and read: review_data builds keys with make_key, and publish, decisions and import_log read them with parse_key and resolve_key.
 
-def legacy_keys(key):
-    """The keys a multi-column fill (`...|ProposalYear+ProposalMonth`, `...|Capacity+CapacityUnits#FILL2`) was logged under before 2026-10-01: one per value column, since which column came first cannot be recovered from the key. An empty list for any other key."""
+def make_key(d, pid, row, colid):
+    """The key of a line or item: `<dir>::<pid>|<row>|<colid>`, the colid with its `#...` suffix."""
+    return f"{d}::{pid}|{row}|{colid}"
+
+
+def parse_key(key):
+    """`<dir>::<pid>|<row>|<colid>` to (dir, pid, row, colid), the colid WITH its `#...` suffix. None for any other key (a marker key, a malformed one)."""
     d, sep, rest = str(key).partition("::")
     parts = rest.split("|", 2)
-    if not sep or len(parts) != 3:
-        return []
-    base, _, suffix = parts[2].partition("#")
+    return (d, parts[0], parts[1], parts[2]) if sep and len(parts) == 3 else None
+
+
+def legacy_colids(colid):
+    """The single-column colids a multi-column fill colid was logged under before 2026-10-01, one per value column, each with the fill's `#...` suffix. An empty list for any other colid."""
+    base, _, suffix = str(colid).partition("#")
     if "+" not in base:
         return []
     sfx = "#" + suffix if suffix else ""
-    return [f"{d}::{parts[0]}|{parts[1]}|{c}{sfx}" for c in base.split("+")]
+    return [c + sfx for c in base.split("+")]
+
+
+def legacy_keys(key):
+    """The keys a multi-column fill (`...|ProposalYear+ProposalMonth`, `...|Capacity+CapacityUnits#FILL2`) was logged under before 2026-10-01: one per value column, since which column came first cannot be recovered from the key. An empty list for any other key."""
+    s = parse_key(key)
+    return [make_key(s[0], s[1], s[2], c) for c in legacy_colids(s[3])] if s else []
+
+
+def key_index(known_keys):
+    """What resolve_key looks a key up in: the known keys themselves, the known keys by (dir, pid, colid), and the multi-column fill keys by (dir, pid, one of their single colids). Build it once when resolving many keys against one build."""
+    by_ident, by_legacy = {}, {}
+    for k in known_keys:
+        s = parse_key(k)
+        if not s:
+            continue
+        by_ident.setdefault((s[0], s[1], s[3]), []).append(k)
+        for c in legacy_colids(s[3]):
+            by_legacy.setdefault((s[0], s[1], c), []).append(k)
+    return {"keys": set(known_keys), "ident": by_ident, "legacy": by_legacy}
+
+
+def resolve_key(key, known_keys, index=None):
+    """The key of this build that a logged key stands for, or None. In order:
+      - the key itself, when the build has it
+      - a renumbered row: the one known key with the same dir, ProjectID and colid (only the sheet row differs; a row inserted above the pipeline moved it)
+      - a legacy fill: the one multi-column fill key with the same dir and ProjectID that names this key's single column (a fill logged before 2026-10-01)
+    None when nothing matches, or when the first rule that matches finds more than one key (a multi-row ProjectID): a guess would put a call on the wrong line. `index` is key_index(known_keys), passed to save rebuilding it per call."""
+    ix = index or key_index(known_keys)
+    if key in ix["keys"]:
+        return key
+    s = parse_key(key)
+    if not s:
+        return None
+    ident = (s[0], s[1], s[3])
+    cands = ix["ident"].get(ident) or ix["legacy"].get(ident) or []
+    return cands[0] if len(cands) == 1 else None
 
 
 # ---- concern helpers (pure functions of the dataset) --------------------------------

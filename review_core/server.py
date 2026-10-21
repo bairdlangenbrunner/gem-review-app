@@ -11,16 +11,19 @@ The shared loopback review server. Standard library only; it binds a loopback ad
     POST /api/item          item calls
     POST /api/<type>        one route per tracker record type and marker (GOGPT: /api/flag)
 
-A tracker adds routes through config.routes(app) and caps through config.caps and config.dynamic_caps(app). Answers: 400 when the store refuses a request, the status a Refusal names, 502 when the decision store cannot be written (nothing saved anywhere), 500 for any other failed write (the logs were rolled back).
+main() is the command line both researcher repos share (see its docstring). A tracker adds routes through config.routes(app) and caps through config.caps and config.dynamic_caps(app). Answers: 400 when the store refuses a request, the status a Refusal names, 502 when the decision store cannot be written (nothing saved anywhere), 500 for any other failed write (the logs were rolled back).
 """
+import argparse
 import gzip
 from html import escape
 import ipaddress
 import json
 import mimetypes
 import re
+import subprocess
 import sys
 import threading
+import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -296,3 +299,81 @@ def make_handler(app, server_version="gem_review_app/1"):
 def make_server(app, host="127.0.0.1", port=None, server_version="gem_review_app/1"):
     ensure_loopback(host)
     return ThreadingHTTPServer((host, app.config.port if port is None else port), make_handler(app, server_version))
+
+
+def git_user(root):
+    """git config user.name in `root`, or "reviewer"."""
+    try:
+        return subprocess.run(["git", "config", "user.name"], capture_output=True, text=True,
+                              cwd=root).stdout.strip() or "reviewer"
+    except OSError:
+        return "reviewer"
+
+
+def main(argv=None, *, description, port, add_args, build_argv, build_data, make_app, make_server, pull, ledger,
+         data_default, git_root, no_store_note, auth_hint, where):
+    """The server command line both researcher repos share. The repo's review_app/server.py passes its hooks:
+
+    add_args(ap)               the arguments that pick the dataset
+    build_argv(args, data_path) the review_data.main arguments for a build (SystemExit when the arguments cannot build)
+    build_data(argv)           review_data.main
+    make_app(data_path, reviewer, build, led) the repo's App; `build` is None with --no-build
+    make_server(app, host, port) the repo's make_server
+    pull, ledger               the repo's bound pull and ledger modules
+    data_default               the dataset path without --data (work/review_data.json)
+    git_root                   where git_user reads user.name
+    no_store_note              what --no-store prints on stderr
+    auth_hint                  what to do when the store account's address cannot be read
+    where(led)                 the startup line's middle part: where decisions are written
+
+    The common arguments are --data, --reviewer, --reviewer-email, --no-store, --host, --port, --no-open and --no-build. A non-loopback --host stops before anything is built."""
+    ap = argparse.ArgumentParser(description=description)
+    add_args(ap)
+    ap.add_argument("--data", default=None, help="dataset path (default work/review_data.json)")
+    ap.add_argument("--reviewer", default=None, help="default: git config user.name; recorded as initials (store.initials)")
+    ap.add_argument("--reviewer-email", default=None,
+                    help="the address written on this person's rows in the Google decision store "
+                         "(default: the gws-gem-write account's address)")
+    ap.add_argument("--no-store", action="store_true",
+                    help="DEV/TESTS ONLY: write the staging-dir sidecars alone, skipping the Google decision store")
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=port)
+    ap.add_argument("--no-open", action="store_true", help="do not open the browser")
+    ap.add_argument("--no-build", action="store_true", help="serve --data as it is; do not rebuild")
+    args = ap.parse_args(argv)
+    try:
+        ensure_loopback(args.host)
+    except ValueError as e:
+        raise SystemExit(str(e))
+    data_path = Path(args.data) if args.data else Path(data_default)
+    build = None
+    if not args.no_build:
+        build = build_argv(args, data_path)
+        build_data(build)
+    elif not data_path.exists():
+        raise SystemExit(f"{data_path} not found: run without --no-build, or pass --data")
+    led = None
+    if args.no_store:
+        print(f"review app: --no-store: {no_store_note}", file=sys.stderr)
+    else:
+        cfg = pull.config()
+        if not cfg.get("store_sheet_id"):
+            raise SystemExit("no decision store configured (review_app/google.json: store_sheet_id); "
+                             "pass --no-store only for dev/tests")
+        email = args.reviewer_email or ledger.whoami()
+        if not email:
+            raise SystemExit(f"cannot read the store account's address (gws-gem-write auth?): pass --reviewer-email, {auth_hint}")
+        data0 = json.loads(data_path.read_text(encoding="utf-8"))
+        led = ledger.Ledger(cfg["store_sheet_id"], *ledger.scope_of(data0), "local", reviewer_email=email)
+    app = make_app(data_path, args.reviewer or git_user(git_root), build, led)
+    httpd = make_server(app, args.host, args.port)
+    url = f"http://{args.host}:{httpd.server_address[1]}/"
+    print(f"review app: {url}  (reviewer: {app.reviewer}; {where(led)}; Ctrl-C to stop)", file=sys.stderr)
+    if not args.no_open:
+        webbrowser.open(url)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()

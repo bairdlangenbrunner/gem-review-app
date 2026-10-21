@@ -47,3 +47,22 @@ table.pair td { white-space: pre-wrap; }
 .item.watch-existing_plant { border-left: 4px solid var(--accent); }
 /* the header line: what the page covers, as plain text so it does not read as a button */
 .scope .where { color: var(--ink); }
+.scope .nplants { margin-left: 4px; }
+/* the location block: two satellite patches with a crosshair, a caption and the imagery credit */
+.loc { margin-top: 10px; }
+.loc .panes { display: flex; gap: 12px; flex-wrap: wrap; }
+.loc .pane { flex: 1 1 260px; min-width: 0; }
+.loc .pane .ttl { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
+.loc .pane .nopt { font-size: 13px; color: var(--muted); border: 1px dashed var(--line); padding: 40px 8px; text-align: center; }
+.loc .tiles { position: relative; width: 100%; max-width: 512px; aspect-ratio: 1 / 1; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
+.loc .tiles img { position: absolute; width: 50%; height: 50%; display: block; }
+.loc .cross { position: absolute; background: #e5252a; pointer-events: none; }
+.loc .cross.h { width: 24px; height: 2px; transform: translate(-50%, -1px); }
+.loc .cross.v { width: 2px; height: 24px; transform: translate(-1px, -50%); }
+.loc .pane .coord { font-size: 13px; margin-top: 4px; }
+.loc .cap { font-size: 13px; margin-top: 6px; }
+.loc .attr { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.loc .mapimg { margin-top: 8px; }
+.loc .mapimg img { max-width: 240px; max-height: 180px; border: 1px solid var(--line); }
+.loc .cpts { border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+.loc .cpts th, .loc .cpts td { border: 1px solid var(--line); padding: 2px 6px; text-align: left; }

@@ -5,10 +5,7 @@ live review pages after a change to the shared interface (docs/refresh.md, step 
     python scripts/check_consumers.py --check            # each repo's build_all.py --check; exit 1 if any page is not fresh
     python scripts/check_consumers.py --hook EVENT       # Claude Code hook: stdin is the event JSON, stdout the merged hook output
 
-A checkout that is missing, or has no review_app/build_all.py, is skipped. The hook mode hands the same event to each
-repo's own `build_all.py --hook EVENT` (each keeps its own session files under its own work/) and merges what they print:
-the context lines are joined for SessionStart and UserPromptSubmit, and the block reasons for Stop. Nothing here builds,
-publishes or writes outside what those hooks write.
+A checkout that is missing, or has no review_app/build_all.py, is skipped. The hook mode hands the same event to each repo's own `build_all.py --hook EVENT` (each keeps its own session files under its own work/) and reads the JSON contract it prints (review_core/hooks.py: {"stale": [...], "warnings": [...]}). Lines of stdout that are not a JSON object are ignored. It prints the same contract, merged, with each entry's `repo` added, and forwards one plain sentence per stale page: as context lines for SessionStart and UserPromptSubmit, and as the block reason for Stop. Nothing here builds, publishes or writes outside what those hooks write.
 """
 import argparse
 import json
@@ -32,28 +29,37 @@ def run(repo, args, stdin=None):
                           capture_output=True, text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": str(repo)})
 
 
-def merge(event, outputs):
-    """One hook output from the repos' outputs (a list of JSON strings), or None when all were silent."""
-    texts, blocks = [], []
-    for name, raw in outputs:
-        raw = (raw or "").strip()
-        if not raw:
+def parse(raw):
+    """The contract objects in one repo's stdout: each line that is a JSON object; other lines are ignored."""
+    out = []
+    for line in (raw or "").splitlines():
+        line = line.strip()
+        if not line.startswith("{"):
             continue
         try:
-            o = json.loads(raw)
+            o = json.loads(line)
         except ValueError:
-            texts.append(f"[{name}] {raw}")
             continue
-        if o.get("decision") == "block":
-            blocks.append(f"[{name}] {o.get('reason', '')}")
-        ctx = (o.get("hookSpecificOutput") or {}).get("additionalContext")
-        if ctx:
-            texts.append("\n".join(f"[{name}] {l}" for l in ctx.splitlines()))
+        if isinstance(o, dict):
+            out.append(o)
+    return out
+
+
+def merge(event, outputs):
+    """One hook output (the merged contract, plus Claude Code's fields when there is something to say) from the repos' outputs: [(repo name, stdout)]."""
+    stale, warnings = [], []
+    for name, raw in outputs:
+        for o in parse(raw):
+            stale += [dict(e, repo=name) for e in o.get("stale") or []]
+            warnings += [f"[{name}] {w}" for w in o.get("warnings") or []]
+    out = {"stale": stale, "warnings": warnings}
+    texts = [f"[{e['repo']}] {e.get('text') or e.get('name')}" for e in stale]
     if event == "Stop":
-        return json.dumps({"decision": "block", "reason": " ".join(blocks)}) if blocks else None
-    if texts:
-        return json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": "\n".join(texts)}})
-    return None
+        if texts:
+            out.update(decision="block", reason=" ".join(texts))
+    elif texts or warnings:
+        out["hookSpecificOutput"] = {"hookEventName": event, "additionalContext": "\n".join(texts + warnings)}
+    return json.dumps(out)
 
 
 def main(argv=None, base=None):
@@ -64,9 +70,7 @@ def main(argv=None, base=None):
     found = consumers(base)
     if a.hook:
         stdin = sys.stdin.read()
-        out = merge(a.hook, [(n, run(r, ["--hook", a.hook], stdin).stdout) for n, r in found])
-        if out:
-            print(out)
+        print(merge(a.hook, [(n, run(r, ["--hook", a.hook], stdin).stdout) for n, r in found]))
         return 0
     bad = False
     for n, r in found:

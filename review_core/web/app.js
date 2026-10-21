@@ -59,7 +59,7 @@
   var ITEM_BY_KEY = {};
   var LINE_BY_KEY = {};
   // the vocabularies: the tracker's ext.js (T) wins, then the built page's tracker block (TB), then these defaults
-  var ITEM_CALLS = {concern: ["confirmed", "dismissed", "needs_research"]};
+  var ITEM_CALLS = {};       // item kind -> calls; every tracker supplies these (T.item_calls or the page block)
   var OTHER_CALLS = ["noted", "todo", "dismissed"];
   var NOTE_REQUIRED = {};    // "kind:call" pairs that need a note saying why
   var CALL_LABEL = {needs_research: "needs research"};
@@ -114,11 +114,18 @@
   function tierOf(l) { return l.tier === "high" || l.tier === "medium" || l.tier === "low" ? l.tier : "untiered"; }
   function cur(l) { return l.reviewed && l.decision ? l.decision : null; }
   // drawn grayed once decided (hold stays bright: still open)
+  // a held line grays out too: it has a decision, even if the question stays open
+  function grayed(l) { return settled(l) || cur(l) === "hold"; }
   function settled(l) { var d = cur(l); return d === "accept" || d === "reject" || d === "suggest"; }
   function dstate(o) {
     var d = o._item ? o.call : cur(o);
     return d ? d : "undecided";
   }
+  // a line the tracker leaves out of the count (T.counted; pipelines: changes the backend already holds). One predicate for the
+  // badge, the progress, the tab counts, the undecided view and its facet count, "card done", "next undecided" and bulk accept.
+  function counted(o) { return !!o._item || !(T.counted && T.counted(o) === false); }
+  // open and waiting on a call: undecided and counted
+  function isOpen(o) { return dstate(o) === "undecided" && counted(o); }
   var TODAY = (function () {
     try { return new Intl.DateTimeFormat("en-CA", {timeZone: "America/New_York"}).format(new Date()); } catch (e) { return ""; }
   })();
@@ -195,6 +202,8 @@
       else if (item && !itemsInView(fs) && ITEM_FACETS.indexOf(skip) < 0) return false;
     }
     if (skip !== "decision" && fs.decision && dstate(o) !== fs.decision && !(!item && S.stay[o.key])) return false;
+    // a line the tracker does not count is not waiting on a call: the undecided view leaves it out (any other decision view lists it)
+    if (skip !== "decision" && fs.decision === "undecided" && !item && !counted(o) && !S.stay[o.key]) return false;
     if (skip !== "tier" && fs.tier && (item || tierOf(o) !== fs.tier)) return false;
     if (fs.dir && o.dir !== fs.dir) return false;
     if (fs.column && (item || o.column !== fs.column)) return false;
@@ -208,7 +217,7 @@
     p.lines.forEach(function (l) {
       if (!match(l, p, FS, null, q)) return;
       n++;
-      if (!cur(l)) { todo++; tsev[sevOf(l)]++; }
+      if (isOpen(l)) { todo++; tsev[sevOf(l)]++; }   // shown but not counted (T.counted)
     });
     p.items.forEach(function (it) { if (match(it, p, FS, null, q)) ni++; });
     p._n = n; p._todo = todo; p._ni = ni; p._tsev = tsev;
@@ -245,7 +254,8 @@
   function facetCounts(facet, values) {
     var q = FS.q.trim().toLowerCase(), c = {};
     values.forEach(function (v) { c[v] = 0; });
-    function tally(o, p, v) { if (match(o, p, FS, facet, q) && v in c) c[v]++; }
+    // the "undecided" option counts what that view will list: lines the tracker does not count are left out (the same rule as match)
+    function tally(o, p, v) { if (facet === "decision" && v === "undecided" && !counted(o)) return; if (match(o, p, FS, facet, q) && v in c) c[v]++; }
     // items count under kind (and the facets that put them in view) always, and under decision when the filters let items through
     var items = facet === "kind" || ITEM_FACETS.indexOf(facet) >= 0 || (facet === "decision" && itemsInView(FS));
     cards().forEach(function (p) {
@@ -253,6 +263,12 @@
       if (items) p.items.forEach(function (it) { tally(it, p, facetVal(it, facet)); });
     });
     return c;
+  }
+  // size a dropdown to its longest option (plus room for the arrow) so the boxes stay snug; counts are padded to three digits so the width does not jump as the filters change
+  function fitSelect(s) {
+    var n = 0;
+    Array.prototype.forEach.call(s.options, function (o) { n = Math.max(n, o.textContent.replace(/\(\d+\)$/, "(000)").length); });
+    s.style.width = (n + 3.5) + "ch";
   }
   // a facet dropdown: "any" plus one option per value with its live count ("accept (3)")
   function facetSelect(id, facet, values, labels, totals) {
@@ -265,6 +281,7 @@
     });
     s.innerHTML = h;
     s.value = FS[facet];
+    fitSelect(s);
   }
   // a click outside an open checkbox dropdown closes it
   function closeDrops(e) {
@@ -281,6 +298,7 @@
       return '<option value="' + esc(k) + '">' + esc(k) + " (" + seen[k] + ")</option>";
     }).join("");
     s.value = FS.by;
+    fitSelect(s);
   }
   function renderChips() {
     if (T.renderChips) T.renderChips();
@@ -369,7 +387,7 @@
   function renderProgress() {
     var total = 0, done = 0, sev = {major: {done: 0, total: 0}, minor: {done: 0, total: 0}};
     LINES.forEach(function (l) {
-      if (T.counted && T.counted(l) === false) return;     // a line the tracker leaves out of the count (pipelines: landed changes)
+      if (!counted(l)) return;     // a line the tracker leaves out of the count (pipelines: landed changes)
       total++; sev[sevOf(l)].total++; if (cur(l)) { done++; sev[sevOf(l)].done++; }
     });
     S.progress = {done: done, total: total, sev: sev};
@@ -395,21 +413,25 @@
     var t = p.items.length;
     return p._ni < t ? p._ni + " of " + t + " items" : t + " item" + (t === 1 ? "" : "s");
   }
-  // a card is done when it has decidable lines and none is left to decide (items do not count); "hide done" drops it from the left pane (the open card stays so it does not vanish under the reviewer)
+  // a card is done when it has decidable lines and none is left to decide (items and uncounted lines do not count); "hide done" drops it from the left pane (the open card stays so it does not vanish under the reviewer)
   function cardDone(p) {
-    return p.lines.length > 0 && p.lines.every(function (o) { return dstate(o) !== "undecided"; });
+    return p.lines.length > 0 && !p.lines.some(isOpen);
   }
   // "hide with items" drops every card that carries items to call (information-only items do not count)
   function cardHasItems(p) {
     return (p.items || []).some(function (it) { return !INFO_KINDS[it.kind]; });
+  }
+  // a card the queue pane leaves out (hide done / hide with items), so j / k / J do not step onto it
+  function queueHides(i) {
+    var p = cards()[i];
+    return i !== S.pipe && !!p && ((S.hideDone && cardDone(p)) || (S.hideItems && cardHasItems(p)));
   }
   function renderQueue() {
     if (T.renderQueue && T.renderQueue()) return;     // the tracker drew the pane itself (GOGPT checklist view)
     var h = [], all = cards();
     S.visible.forEach(function (i) {
       var p = all[i];
-      if (S.hideDone && cardDone(p) && i !== S.pipe) return;
-      if (S.hideItems && cardHasItems(p) && i !== S.pipe) return;
+      if (queueHides(i)) return;
       var dots = {};
       p.lines.forEach(function (l) { dots[tierOf(l)] = 1; });
       var dd = ["high", "medium", "low"].filter(function (t) { return dots[t]; })
@@ -507,12 +529,12 @@
     return ' <button type="button" class="copybtn" data-clip="' + esc(text) + '" aria-label="copy"' + tipAttrs("copy to clipboard") + ">⧉</button>";
   }
   // one value row: field | now | proposed | tag
-  function valueRow(c, was, now, reverified) {
+  function valueRow(c, was, now, reverified, l) {
     var wasH = blankv(was) ? "" : "<span>" + esc(was) + "</span>";
     var nowH, t = "", same = false;
     if (!blankv(was) && String(was).trim() === String(now).trim()) { nowH = wasH; same = true; t = reverified ? "re-verified" : ""; }
-    else if (blankv(now)) { nowH = '<span class="blank">(clear)</span>'; t = "clear"; }
-    else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + t + '">' + esc(now) + "</span>" + copyBtn(now); }
+    else if (blankv(now)) { nowH = '<span class="newv c-' + tierOf(l || {}) + '">(clear)</span>'; t = "clear"; }
+    else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + tierOf(l || {}) + '">' + esc(now) + "</span>" + copyBtn(now); }
     return '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";
   }
   function valueRows(l) {
@@ -520,7 +542,7 @@
     if (!cols.length) cols = l.columns || [l.column];
     return cols.map(function (c) {
       if (!(c in pv) && blankv(curv[c])) return "";
-      return valueRow(c, curv[c], c in pv ? pv[c] : curv[c], l.reverified);
+      return valueRow(c, curv[c], c in pv ? pv[c] : curv[c], l.reverified, l);
     }).join("");
   }
   // the Data Source row: the cell now, and the cell it would be. Links are ADDED next to the ones
@@ -535,7 +557,7 @@
     else {
       t = !curr.length ? "fill" : (added.length ? "add" : "");
       propH = "<ul>" + curr.map(function (u) { return '<li class="kept">' + shortLink(u) + "</li>"; }).join("") +
-        added.map(function (u) { return '<li><span class="newref c-fill">' + shortLink(u) + "</span>" + copyBtn(u) + " " + vmark(u, l) + "</li>"; }).join("") + "</ul>";
+        added.map(function (u) { return '<li><span class="newref c-' + tierOf(l) + '">' + shortLink(u) + "</span>" + copyBtn(u) + " " + vmark(u, l) + "</li>"; }).join("") + "</ul>";
     }
     return '<tr class="ref"><td class="f">' + esc(col) + "</td><td>" + nowH + "</td><td>" + propH + '</td><td class="t">' + tag(t) + "</td></tr>";
   }
@@ -686,22 +708,23 @@
     return ["high", "medium", "low", "untiered"].filter(function (t) { return c[t]; })
       .map(function (t) { return chip(c[t] + " " + (t === "untiered" ? "unrated" : t), t === "untiered" ? "" : t); }).join(" ");
   }
-  // the three bulk buttons on a card head: accept the minor changes, the high-confidence ones, or all of them
+  // the three bulk buttons on a card head: accept the minor changes, the high-confidence ones, or all of them.
+  // A button is live only when a line it covers is open (isOpen), the same rule bulk accept uses to pick its lines.
   function bulkButtons(p) {
     var wc = W.card, wl = W.lines;
     return (function () {
         var minor = p.lines.filter(function (l) { return sevOf(l) === "minor"; });
-        var on = minor.some(function (l) { return !cur(l); });
-        var why = !minor.length ? "no minor " + wl + " on this " + wc : "every minor " + W.line + " is already decided";
-        return '<button type="button" class="bulk b-accept' + (on ? "" : " off") + '" data-bulk="pipe-minor"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
+        var on = minor.some(isOpen);
+        var why = !minor.length ? "no minor " + wl + " on this " + wc : "no minor " + W.line + " on this " + wc + " is waiting on a call";
+        return '<button type="button" class="bulk b-accept' + (on ? "" : " off") + '" data-bulk="bulk-minor"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
           tipAttrs(on ? "accept every undecided minor " + W.line + " on this " + wc + " (the values stand, only links are added) that the filters show" : why) + '>accept all minor ' + wl + '</button>';
       })() +
-      '<button type="button" class="bulk b-accept" data-bulk="pipe-high"' + tipAttrs("accept every undecided green (high confidence) " + W.line + " on this " + wc + ", major or minor, that the filters show") + '>accept all high-conf ' + wl + '</button>' +
+      '<button type="button" class="bulk b-accept" data-bulk="bulk-high"' + tipAttrs("accept every undecided green (high confidence) " + W.line + " on this " + wc + ", major or minor, that the filters show") + '>accept all high-conf ' + wl + '</button>' +
       (function () {
         var nonHigh = p.lines.filter(function (l) { return tierOf(l) !== "high"; });
-        var on = nonHigh.some(function (l) { return !cur(l); });
-        var why = !nonHigh.length ? "every " + W.line + " is high confidence" : "every medium- and low-confidence " + W.line + " is already decided";
-        return '<button type="button" class="bulk b-hold' + (on ? "" : " off") + '" data-bulk="pipe-all"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
+        var on = nonHigh.some(isOpen);
+        var why = !nonHigh.length ? "every " + W.line + " is high confidence" : "no medium- or low-confidence " + W.line + " on this " + wc + " is waiting on a call";
+        return '<button type="button" class="bulk b-hold' + (on ? "" : " off") + '" data-bulk="bulk-all"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
           tipAttrs(on ? "accept every undecided " + W.line + " on this " + wc + ", any confidence level, that the filters show" : why) + '>accept all ' + wl + '</button>';
       })();
   }
@@ -714,7 +737,7 @@
       .filter(Boolean).map(function (x) { return "<span>" + x + "</span>"; }).join("");
     var sub = T.cardSub ? T.cardSub(p) : "";
     var h = '<div class="cardhead"><div class="headrow">' + "<h2>" + (T.showPid && !T.showPid(p) ? "" : '<span class="pid"' + tipAttrs(T.pidTip || "click to copy the id") + '>' + esc(p.pid) + "</span>") +
-      '<a href="#" class="only" data-tab="all"' + tipAttrs("review everything on this " + W.card + ": every " + W.line + " (filters ignored) and every item") + '>' + esc(p.name || "(no name)") + "</a>" +
+      '<a href="#" class="only" data-tab="all"' + tipAttrs("review everything on this " + W.card + ": every " + W.line + " (filters ignored) and every item") + '>' + esc(p.name || "(no name)") + "</a>" + copyBtn(p.name) +
       (sub ? '<span class="hseg">' + esc(sub) + "</span>" : "") + '</h2><div class="bulkbtns">' +
       (T.bulkButtons ? T.bulkButtons(p) : bulkButtons(p)) +
       '</div></div><div class="ctx">' + ctx + "</div>";
@@ -727,7 +750,7 @@
     var bySev = {major: p.lines.filter(function (l) { return sevOf(l) === "major"; }), minor: p.lines.filter(function (l) { return sevOf(l) === "minor"; })};
     h += '<div class="tabs" role="tablist">' + SEV.map(function (s) {
       // the tab counts leave out the lines the tracker does not count (T.counted; pipelines: changes the backend already holds)
-      var live = T.counted ? bySev[s].filter(function (l) { return T.counted(l) !== false; }) : bySev[s];
+      var live = bySev[s].filter(counted);
       var openS = live.filter(function (l) { return !cur(l); }).length;
       var inView = live.filter(function (l) { return match(l, p, FS, null, FS.q.trim().toLowerCase()); }).length;
       var hid = live.length - inView;
@@ -755,7 +778,7 @@
       if (!g.plain) h += '<div class="segdiv">' + (g.html != null ? g.html : esc(g.label)) + "</div>";
       g.lines.forEach(function (l) {
         S.shown.push(l._i);
-        h += '<div class="line tier-' + tierOf(l) + (cur(l) ? " d-" + cur(l) : "") + ((T.dimmed ? T.dimmed(l) : settled(l)) ? " dim" : "") +
+        h += '<div class="line tier-' + tierOf(l) + (cur(l) ? " d-" + cur(l) : "") + ((T.dimmed ? T.dimmed(l) : grayed(l)) ? " dim" : "") +
           (T.lineClass ? T.lineClass(l) : "") + (l._i === S.line ? " cur" : "") + '" id="line-' + l._i + '" data-i="' + l._i + '">' + lineHtml(l) + "</div>";
       });
     });
@@ -777,13 +800,20 @@
   }
 
   // ---- keyboard navigation ----
-  function stepLine(dir) {
+  // a line kept in view only because it was decided this session (the decision filter would drop it): j / k pass over it, shift+k comes back to it
+  function pinnedOnly(i) {
+    var o = LINES[i];
+    return !!(o && S.stay[o.key] && FS.decision && dstate(o) !== FS.decision);
+  }
+  function stepLine(dir, all) {
     var at = S.shown.indexOf(S.line), n = at + dir;
+    while (!all && n >= 0 && n < S.shown.length && S.shown[n] !== S.line && pinnedOnly(S.shown[n])) n += dir;
     if (n >= 0 && n < S.shown.length) return setLine(S.shown[n]);
     stepPipe(dir, dir < 0);
   }
   function stepPipe(dir, toLast) {
     var at = S.visible.indexOf(S.pipe), n = at + dir;
+    while (n >= 0 && n < S.visible.length && queueHides(S.visible[n])) n += dir;
     if (n < 0 || n >= S.visible.length) return;
     selectPipe(S.visible[n]);
     if (toLast && S.shown.length) setLine(S.shown[S.shown.length - 1]);
@@ -825,8 +855,9 @@
       toast("not saved: " + e.message);
     }).then(function () { delete S.saving[l.key]; });
   }
-  function applyRecord(r) {
-    var l = LINE_BY_KEY[r.key];
+  // l: the line the record lands on, when that is not the line of its own key (a record under an older key)
+  function applyRecord(r, l) {
+    l = l || LINE_BY_KEY[r.key];
     if (!l) return;
     l.decision = r.undecided ? null : r.decision;
     l.reviewed = !r.undecided;
@@ -836,8 +867,8 @@
     l.reference = r.undecided ? "" : (r.reference || "");
     l.decision_note = r.undecided ? "" : (r.note || "");
   }
-  function applyItemRecord(r) {
-    var it = ITEM_BY_KEY[r.key];
+  function applyItemRecord(r, it) {
+    it = it || ITEM_BY_KEY[r.key];
     if (!it) return;
     it.call = r.undecided ? null : r.call;
     it.call_note = r.undecided ? null : r.note;
@@ -942,7 +973,7 @@
   function nextUndecided() {       // after a keypress decision: the next open line, then the next plant
     var at = S.shown.indexOf(S.line);
     for (var n = at + 1; n < S.shown.length; n++) {
-      if (!cur(LINES[S.shown[n]])) return setLine(S.shown[n]);
+      if (isOpen(LINES[S.shown[n]])) return setLine(S.shown[n]);
     }
     stepPipe(1);
   }
@@ -1016,7 +1047,7 @@
   // the keyboard map; a tracker adds or replaces keys with T.keys
   var KEYS = {
     j: function () { stepLine(1); }, k: function () { stepLine(-1); },
-    J: function () { stepPipe(1); }, K: function () { stepPipe(-1); },
+    J: function () { stepPipe(1); }, K: function () { stepLine(-1, true); },
     o: openFirstRef,
     d: function () {
       var l = S.line >= 0 && $("line-" + S.line), m = l && l.querySelector("details[data-more]");
@@ -1037,7 +1068,7 @@
   // the help rows: T.help (an array of [keys, text], or a function of the defaults) replaces or edits them
   function helpRows() {
     var wl = W.line, wc = W.card;
-    var rows = [["j / k", "next / previous " + wl + " (runs on into the next " + wc + ")"], ["J / K", "next / previous " + wc],
+    var rows = [["j / k", "next / previous " + wl + " still to decide (runs on into the next " + wc + ")"], ["K", "previous " + wl + ", including ones you just decided"], ["J", "next " + wc],
                 ["a / h / r", "accept / hold / reject the " + wl + "; saved at once, then on to the next open " + wl],
                 ["s", "suggest a different value: an inline form on the " + wl + " (value + note; enter saves, esc cancels)"],
                 ["i", "switch the card between " + W.lines + " and items; calls save on change"],
@@ -1124,7 +1155,6 @@
       e.preventDefault();
       var keepPipe = S.pipe;
       FS = defaults(); FS.decision = "";
-      if (T.showAll) T.showAll(FS);      // the tracker widens "show all" further (pipelines: changes already in the backend)
       syncControls(); S.pin = keepPipe; refilter(true); writeRoute(false);
       return;
     }
@@ -1153,7 +1183,7 @@
   }
 
   // ---- bulk ----
-  // The targets are the CURRENT filtered lines of the open card. Lines already decided are skipped. T.bulkTargets(mode, line) may refuse a line ("other").
+  // The targets are the CURRENT filtered lines of the open card. Lines already decided, and lines the tracker does not count, are skipped. T.bulkTargets(mode, line) may refuse a line ("other").
   function bulkTargets(mode) {
     var q = FS.q.trim().toLowerCase();
     var t = {lines: [], byKind: {}, decision: "accept", skip: {decided: 0, other: 0}, extra: {}};
@@ -1161,25 +1191,26 @@
     p.lines.forEach(function (l) {
       if (!match(l, p, FS, null, q)) return;
       if (cur(l)) { t.skip.decided++; return; }
+      if (!counted(l)) { t.extra.uncounted = (t.extra.uncounted || 0) + 1; return; }   // T.bulkSkip.uncounted names them (pipelines: already in the backend)
       // the tracker may refuse a line: a string names its own skip reason (T.bulkSkip holds the text), false counts as "other"
       var tb = T.bulkTargets ? T.bulkTargets(mode, l) : null;
       if (typeof tb === "string") { t.extra[tb] = (t.extra[tb] || 0) + 1; return; }
-      if ((mode === "pipe-high" && tierOf(l) !== "high") || (mode === "pipe-minor" && sevOf(l) !== "minor") || tb === false) { t.skip.other++; return; }
+      if ((mode === "bulk-high" && tierOf(l) !== "high") || (mode === "bulk-minor" && sevOf(l) !== "minor") || tb === false) { t.skip.other++; return; }
       t.lines.push(l);
       t.byKind[l.kind] = (t.byKind[l.kind] || 0) + 1;
     });
     return t;
   }
   function bulkTitle(mode) {
-    return ({"pipe-minor": "accept all minor " + W.lines, "pipe-high": "accept all high-conf " + W.lines, "pipe-all": "accept all " + W.lines})[mode] || mode;
+    return ({"bulk-minor": "accept all minor " + W.lines, "bulk-high": "accept all high-conf " + W.lines, "bulk-all": "accept all " + W.lines})[mode] || mode;
   }
   function showBulk(mode) {
     if (!Store.caps.decide) return notYet();
     if (S.pipe < 0) return toast("nothing in view");
     var t = bulkTargets(mode), dlg = $("dialog"), sk = t.skip;
-    var skipTxt = Object.keys(t.extra).map(function (k) { return t.extra[k] + ((T.bulkSkip || {})[k] || " " + k); })
+    var skipTxt = Object.keys(t.extra).map(function (k) { return t.extra[k] + ((T.bulkSkip || {})[k] || (k === "uncounted" ? " not waiting on a call" : " " + k)); })
       .concat([sk.decided && sk.decided + " already decided",
-               sk.other && sk.other + (mode === "pipe-high" ? " not high confidence" : " major (the value moves: decide those by hand)")]).filter(Boolean).join(", ");
+               sk.other && sk.other + (mode === "bulk-high" ? " not high confidence" : " major (the value moves: decide those by hand)")]).filter(Boolean).join(", ");
     if (!t.lines.length) return toast("nothing to accept in view" + (skipTxt ? " (skipped: " + skipTxt + ")" : ""));
     var kinds = Object.keys(t.byKind).map(function (k) { return "<tr><td>" + esc(KIND_LABEL[k] || k) + "</td><td>" + t.byKind[k] + "</td></tr>"; }).join("");
     dlg.setAttribute("data-kind", "bulk");
@@ -1256,7 +1287,7 @@
   function routeKey() {
     if (T.routeKey) return T.routeKey(D);
     var c = (D && D.scope) || {};
-    return "review-route:" + [T.name || TB.name || "", c.id || c.country || "", c.quarter || ""].join("|");
+    return "review-route:" + (T.id || T.name || TB.name || "") + ":" + (c.id || "");
   }
   function savedRoute() { try { return localStorage.getItem(routeKey()) || ""; } catch (e) { return ""; } }
   function saveRoute(h) { try { localStorage.setItem(routeKey(), h); } catch (e) { /* storage blocked */ } }
@@ -1298,7 +1329,6 @@
       refilter(true);
       if (pi >= 0 && S.visible.indexOf(pi) < 0) {      // a link to a card the filters would hide
         FS = defaults(); FS.decision = "";
-        if (T.showAll) T.showAll(FS);
         syncControls(); S.pin = pi; refilter(true);
       }
       if (pi >= 0 && S.visible.indexOf(pi) >= 0 && S.pipe !== pi) selectPipe(pi);
@@ -1334,12 +1364,13 @@
       if (synced && Store.requestPush && !$("ledger-btn")) {
         var pb = document.createElement("button");
         pb.id = "ledger-btn"; pb.type = "button"; pb.className = "ghost"; pb.textContent = "push to log";
-        pb.dataset.tip = "ask Claude to add your calls that are not in the log yet; calls already logged or already pushed are left out. Nothing is written to the tracker";
+        pb.dataset.tip = "ask Claude to add your calls that are not in the log yet; calls already logged or already pushed are left out. When a Claude session is watching this page it is woken at once (a comment sent to Claude) and asks whether to push the accepts to the tracker; otherwise it finds the request on its next check. Nothing is written to the tracker without a yes";
         var ledgerUrl = (window.REVIEW_STATIC || {}).ledger_url;
         if (ledgerUrl) { pb.dataset.tipHref = ledgerUrl; pb.dataset.tipHrefLabel = "open the log ↗"; }
         pb.onclick = function () {
-          Promise.resolve(Store.requestPush()).then(function (r) {
-            toast("push to log requested: " + r.count + " new call" + (r.count === 1 ? "" : "s") + " not yet in the log");
+          Promise.resolve(Store.requestPush(pb)).then(function (r) {
+            toast("push to log requested: " + r.count + " new call" + (r.count === 1 ? "" : "s") + " not yet in the log" +
+              (r.sent ? "; Claude was told and will ask about the sheet push" : "; a watching Claude session picks it up on its next check"));
           }, function (e) { toast(e && e.message ? e.message : "the request did not go through"); });
         };
         ex.parentNode.insertBefore(pb, ex.nextSibling);
@@ -1363,17 +1394,43 @@
   }
 
   // ---- records this page did not save (another reviewer, another tab, a live poll): applied to the data, lines on the open card stay in view; -> how many applied ----
+  // A store that knows whose record speaks for a key (static_store.js: speak, keysFor, apply) has already taken the records into its log. Each line and item they touch
+  // then shows the record that speaks for it, by the Python store's rules: a person's live call over a later machine record, a person's undo over an earlier call,
+  // a record under an older key when the line has no person record of its own. A store without speak (gas.js) lays the records on one at a time, oldest first.
+  // Records that name no line or item (a tracker's markers, such as the GOGPT flag) always land one at a time.
   var REMOTE = false;
   function applyRemote(recs) {
-    var n = 0, open = S.pipe;
+    var n = 0, open = S.pipe, spoken = typeof Store.speak === "function", keys = [], seen = {};
+    function stay(key, o) { if (open >= 0 && o._p === open) S.stay[key] = true; }
+    function one(r) {
+      if (T.applyRecord && T.applyRecord(r, LINE_BY_KEY[r.key], ITEM_BY_KEY[r.key], true)) { n++; return; }
+      var item = "call" in r, o = item ? ITEM_BY_KEY[r.key] : LINE_BY_KEY[r.key];
+      if (!o) return;
+      if (item) applyItemRecord(r); else applyRecord(r);
+      if (!item) stay(r.key, o);
+      n++;
+    }
     REMOTE = true;
     try {
       (recs || []).forEach(function (r) {
-        if (T.applyRecord && T.applyRecord(r, LINE_BY_KEY[r.key], ITEM_BY_KEY[r.key], true)) { n++; return; }
-        var item = "call" in r, o = item ? ITEM_BY_KEY[r.key] : LINE_BY_KEY[r.key];
-        if (!o) return;
-        if (item) applyItemRecord(r); else applyRecord(r);
-        if (!item && open >= 0 && o._p === open) S.stay[r.key] = true;
+        if (!spoken) return one(r);
+        var hit = false;
+        (Store.keysFor ? Store.keysFor(r.key) : [r.key]).forEach(function (k) {
+          if (!LINE_BY_KEY[k] && !ITEM_BY_KEY[k]) return;
+          hit = true;
+          if (!seen[k]) { seen[k] = 1; keys.push(k); }
+        });
+        if (!hit) one(r);
+      });
+      keys.forEach(function (k) {
+        var said = Store.speak(k), rec = said[0], l = LINE_BY_KEY[k], it = ITEM_BY_KEY[k];
+        if (!rec) return;             // the values the page was built with stand
+        // the tracker gets the line's latest machine record as well (pipelines: applied)
+        if (T.applyRecord && T.applyRecord(rec, l, it, true, said[1] || null)) { n++; return; }
+        if (Store.apply) Store.apply(it || l, it ? "items" : "lines", rec);
+        else if (it) applyItemRecord(rec, it);
+        else applyRecord(rec, l);
+        if (l) stay(k, l);
         n++;
       });
     } finally { REMOTE = false; }
@@ -1561,9 +1618,9 @@
     tierSummary: tierSummary, cur: cur, tierOf: tierOf, sevOf: sevOf, dstate: dstate, blankv: blankv, dirLabel: dirLabel, timeOf: timeOf, et: et,
     toast: toast, banner: banner, copyText: copyText, refilter: refilter, changed: changed, renderQueue: renderQueue, renderCard: renderCard,
     renderActive: renderActive, syncControls: syncControls, setLine: setLine, selectPipe: selectPipe, writeRoute: writeRoute, applyRoute: applyRoute,
-    applySaved: applySaved, notYet: notYet, facetSelect: facetSelect, facetCounts: facetCounts, match: match, uniq: uniq, defaults: defaults,
+    applySaved: applySaved, notYet: notYet, facetSelect: facetSelect, fitSelect: fitSelect, facetCounts: facetCounts, match: match, uniq: uniq, defaults: defaults,
     isItemKind: isItemKind, itemsInView: itemsInView, kindLabel: kindLabel, callText: callText, itemHead: itemHead, plural: plural,
-    settled: settled, defaultTab: defaultTab, decisionText: decisionText, pipeMatches: pipeMatches,
+    settled: settled, grayed: grayed, counted: counted, isOpen: isOpen, defaultTab: defaultTab, decisionText: decisionText, pipeMatches: pipeMatches,
     save: save, undoCurrent: undoCurrent, noteOf: noteOf, noteBox: noteBox, dropNoteSave: dropNoteSave, setStat: setStat,
     nextUndecided: nextUndecided, openSuggest: openSuggest, reload: function (data) { reload(data); },
     get STICKY() { return STICKY; }, setSticky: function (msg) { STICKY = msg || ""; banner(); }

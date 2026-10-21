@@ -7,18 +7,14 @@ Item kinds and their calls: a concern (qa lane) is confirmed, dismissed or sent 
 
 An ask-the-PM flag is a marker: {key: "pm::" + line or item key, or "pm::" + dir + "::plant:" + pid, flag: "pm", on, note}. It sits beside a decision and never replaces it, so one line can be accepted and flagged.
 
-The watch-item vocabulary lives in the gogpt-researcher repo (review_app/checklist.py WATCH_CALLS), so this config needs that repo on sys.path. Its review_app shims put it there.
+The watch-item vocabulary (WATCH_CALLS) is defined here. The gogpt-researcher repo's review_app/checklist.py imports it from this file, so this folder loads on its own.
 """
 from pathlib import Path
 
 from review_core.config import TrackerConfig
 
-try:
-    from review_app.checklist import WATCH_CALLS
-except ImportError as e:      # the core tests never load this file; a researcher repo always does
-    raise ImportError("trackers.gogpt.config needs the gogpt-researcher repo on sys.path "
-                      "(review_app/checklist.py holds WATCH_CALLS)") from e
-
+# `remove` makes assemble_state.py drop the candidate if a later sweep proposes it again.
+WATCH_CALLS = ("add_to_database", "hold", "possible_updates", "remove")
 LINE_KINDS = ("fill", "change", "reverified", "delete", "plant", "new_row")
 ITEM_KINDS = ("concern", "monitor", "entity", "other")
 CONCERN_CALLS = ("confirmed", "dismissed", "needs_research")
@@ -54,16 +50,16 @@ CONFIG = TrackerConfig(
     cards_key="plants",
     line_kinds=LINE_KINDS,
     item_kinds=ITEM_KINDS,
-    item_calls={"concern": CONCERN_CALLS, "monitor": tuple(WATCH_CALLS)},
+    item_calls={"concern": CONCERN_CALLS, "monitor": WATCH_CALLS},
     other_calls=OTHER_CALLS,
     note_required={("monitor", "remove")},
-    machine_reviewers={"push", "backend sync"},
+    machine_reviewers=set(),     # gogpt has no push and no backend sync, so no machine reviewer
     references=True,
     markers={"flag": {"prefix": FLAG_PREFIX, "value": FLAGS[0], "card_tag": "plant", "field": "pm"}},
     record_fields=record_fields,
     index_entry=index_entry,
     exports=exports,
-    caps={"decide": True},
+    caps={"decide": True, "flag": True},   # flag: the ask-the-PM marker; the core derives no cap from a marker
     web_dir=Path(__file__).resolve().parent / "web",
     port=8767,
 )

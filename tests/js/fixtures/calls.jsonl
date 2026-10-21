@@ -1,0 +1,6 @@
+{"id": "c1", "key": "a::W1:size", "kind": "fill", "decision": "accept", "suggested_value": "", "reference": "", "note": "", "reviewer": "BL", "ts": "2026-10-09T10:01:00-04:00", "undecided": false}
+{"id": "c2", "key": "a::W1:color", "kind": "change", "decision": "hold", "suggested_value": "", "reference": "", "note": "ask the researcher", "reviewer": "AL", "ts": "2026-10-09T10:02:00-04:00", "undecided": false}
+{"id": "c3", "key": "b::W2:size", "kind": "fill", "decision": "suggest", "suggested_value": "42 km", "reference": "https://example.com/report.pdf", "note": "the report says 42", "reviewer": "BL", "ts": "2026-10-09T10:03:00-04:00", "undecided": false}
+{"id": "c4", "key": "a::W1:qa-1", "kind": "concern", "call": "confirmed", "reference": "https://example.com/a", "note": "it is high", "reviewer": "BL", "ts": "2026-10-09T10:04:00-04:00", "undecided": false}
+{"id": "c5", "key": "b::W2:watch-1", "kind": "watch", "call": "keep", "reference": "", "note": "", "reviewer": "AL", "ts": "2026-10-09T10:05:00-04:00", "undecided": false}
+{"id": "c6", "key": "b::W2:color", "kind": "change", "decision": "reject", "suggested_value": "", "reference": "", "note": "wrong color", "reviewer": "BL", "ts": "2026-10-09T10:06:00-04:00", "undecided": false}

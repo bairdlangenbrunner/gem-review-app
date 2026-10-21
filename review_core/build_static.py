@@ -6,13 +6,15 @@ The page has no doctype, html, head or body tags of its own: the Artifact tool w
   1. <title> (the tracker's title, or the one given)
   2. <style>: review_core/web/style.css, then the tracker's web/ext.css
   3. the body of review_core/web/index.html, with its local script and stylesheet tags taken out
-  4. the dataset: <script type="application/octet-stream" id="review-blob">, base64 of gzip {data, index}
+  4. the dataset: <script type="application/octet-stream" id="review-blob">, base64 of gzip {data, index, legacy}, where legacy (left out when empty) is legacy_map
   5. <script>window.REVIEW_STATIC = {reviewer, built, ledger_url, logged, tracker}</script>, where tracker is TrackerConfig.page_block() and logged is the ids of page records already in the decision log (logged_ids)
   6. review_core/web/static_store.js, review_core/web/app.js, then the tracker's web/ext.js
 
 A missing ext.css or ext.js counts as empty. The dataset and its reviewer settings come before the scripts so every script can read them as it loads.
 
-The packed index is {"v": 2, "dirs": [label], "keys": [{rest: entry}]}, the two lists aligned, where rest is the key without its "<dir>::" prefix. A line entry is {k kind, p pid, d default (left out when "accept")}; an item entry is {i kind, p pid, c0 the call the dataset already holds}. A tracker adds fields through config.index_entry (GOGPT: f, the record fields), and through config.index_extras for anything that needs the whole index or dataset (pipelines: concern answers x, the top-level w and cmd).
+The packed index is {"v": 2, "dirs": [label], "keys": [{rest: entry}]}, the two lists aligned, where rest is the key without its "<dir>::" prefix. A line entry is {k kind, p pid, d default (left out when "accept")}; an item entry is {i kind, p pid, c0 the call the dataset already holds}. A tracker adds fields through config.index_entry (GOGPT: f, the record fields), and through config.index_extras for anything that needs the whole index or dataset (pipelines: concern answers x, the top-level w and cmd). The page refuses a key that is missing from the index, and a tracker's ext.js reads the fields it added from it.
+
+The legacy map is {key: [older keys]} from config.legacy_keys, for every line, item and marker key that has any. The page needs it to decide which record speaks for a key the way store.speaker does. It travels in the blob rather than the tracker block because it can be large (a pipelines batch: about 360 KB of JSON, about 25 KB once compressed), and rather than in the index so the index stays exactly what pack_index makes.
 """
 import base64
 import gzip
@@ -64,18 +66,40 @@ def pack_index(data, config):
     return index
 
 
-def blob(data, index):
-    raw = json.dumps({"data": data, "index": index}, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+def legacy_map(data, config):
+    """{key: [older keys]} for every line, item and marker key the tracker's legacy_keys gives any for (see the module docstring). Empty when the tracker has no legacy_keys."""
+    if not config.legacy_keys:
+        return {}
+    keys = []
+    for card in cards(data, config):
+        for grp in ("lines", "items"):
+            for o in card.get(grp, []):
+                keys.append(o["key"])
+                keys.extend(m["prefix"] + o["key"] for m in config.markers.values())
+        keys.extend(f"{m['prefix']}{card.get('dir')}::{m.get('card_tag', 'card')}:{card['pid']}" for m in config.markers.values())
+    out = {}
+    for k in keys:
+        old = list(config.legacy_keys(k) or [])
+        if old:
+            out[k] = old
+    return out
+
+
+def blob(data, index, legacy=None):
+    body = {"data": data, "index": index}
+    if legacy:
+        body["legacy"] = legacy
+    raw = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     return base64.b64encode(gzip.compress(raw, 9, mtime=0)).decode("ascii")
 
 
 def unblob(text):
-    """The {data, index} a blob holds (for tests and checks)."""
+    """The {data, index, legacy?} a blob holds (for tests and checks)."""
     return json.loads(gzip.decompress(base64.b64decode(text)).decode("utf-8"))
 
 
 def read_blob(html):
-    """The {data, index} inside a built page."""
+    """The {data, index, legacy?} inside a built page."""
     m = re.search(rf'<script type="application/octet-stream" id="{BLOB_ID}">([^<]*)</script>', html)
     if not m:
         raise ValueError("no dataset block in this page")
@@ -132,6 +156,6 @@ def render(data, reviewer, config, index=None, title=None, ledger_url="", root=N
         index = pack_index(data, config)
     return (f"<title>{title}</title>\n<style>\n{css.strip()}\n</style>\n"
             f"{body.strip()}\n"
-            f'<script type="application/octet-stream" id="{BLOB_ID}">{blob(data, index)}</script>\n'
+            f'<script type="application/octet-stream" id="{BLOB_ID}">{blob(data, index, legacy_map(data, config))}</script>\n'
             f"<script>window.REVIEW_STATIC = {cfg};</script>\n"
             + "\n".join(scripts) + "\n")

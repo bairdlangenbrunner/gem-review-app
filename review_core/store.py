@@ -6,9 +6,11 @@ Each staging dir holds two sidecars, committed with the batch:
     review_log.jsonl        append-only truth: every decision and every undo, one record per line
     review_decisions.json   derived: {"generated": ts, "decisions": {key: latest record}}
 
-A line decision record is {key, dir, pid, <tracker fields>, kind, decision, suggested_value, reference (when the tracker takes references), note, reviewer, ts, undecided}. An item call record is {key, dir, pid, <tracker fields>, kind, call, reference, note, reviewer, ts, undecided}. A marker record (a flag that sits beside a decision, see config.py) is {key: prefix + line or item key, ..., <marker name>: value, on, note}. The latest record per key wins. An undo is a record with `undecided: true`; nothing is ever deleted from the log. A person is recorded by initials. A machine reviewer (config.machine_reviewers, such as "push" or "backend sync") is kept verbatim, and its records never count as a person's call: a person's live call keeps speaking for the line and the machine record shows as `applied` only where a tracker asks for it.
+A line decision record is {key, dir, pid, <tracker fields>, kind, decision, suggested_value, reference (when the tracker takes references), note, reviewer, ts, undecided}. An item call record is {key, dir, pid, <tracker fields>, kind, call, reference, note, reviewer, ts, undecided}. A marker record (a flag that sits beside a decision, see config.py) is {key: prefix + line or item key, ..., <marker name>: value, on, note}. The latest record per key wins, latest by ts: the log is replayed in time order (in_time_order), so a record imported later with an earlier ts does not speak over a newer one, and the single-file page, which merges records from several places, agrees. An undo is a record with `undecided: true`; nothing is ever deleted from the log. A person is recorded by initials. A machine reviewer (config.machine_reviewers, such as "push" or "backend sync") is kept verbatim, and its records never count as a person's call: a person's live call keeps speaking for the line and the machine record shows as `applied` only where a tracker asks for it.
 
-`bind(config, root)` returns the store API bound to one tracker as a plain dict, so a tracker's shim can do `globals().update(bind(CONFIG, ROOT))` and keep every name its callers import. A shim that passes `into=` its own module gets the names put straight into it, and the writes look up `atomic_write`, `append_jsonl`, `write_derived` and `rollback` there at call time, so a test can replace them on the shim (or, as the core tests do, on this module). Records that came through the ledger also carry id, scope, batch, snapshot and origin; nothing here depends on them.
+`bind(config, root)` returns the store API bound to one tracker as a plain dict, so a tracker's shim can do `globals().update(bind(CONFIG, ROOT))` and keep every name its callers import. A shim that passes `into=` its own module gets the names put straight into it, and the writes look up `atomic_write`, `append_jsonl`, `write_derived` and `rollback` when they run: the one on the shim when a test replaced it there, else this module's (which the core tests replace). Records that came through the ledger also carry id, scope, batch, snapshot and origin; nothing here depends on them.
+
+The rules the single-file page has to apply the same way (the request limits, the initials and address patterns, how line kinds and undo references are checked) are in page_rules(). TrackerConfig.page_block() hands them to review_core/web/static_store.js.
 
 Nothing here touches a tracker database, a live sheet or the staged files.
 """
@@ -17,6 +19,7 @@ import os
 import re
 import threading
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -29,6 +32,10 @@ DERIVED_NAME = "review_decisions.json"
 _INITIALS_RE = re.compile(r"^[A-Z]{1,3}$")
 _EMAIL_RE = re.compile(r"^([^@\s]+)@[^@\s]+\.[^@\s]+$")
 _URL_RE = re.compile(r"^https?://\S+$")
+_EMAIL_SPLIT = r"[._+\-]+"      # an address's local part splits into name parts on these
+_NAME_SPLIT = r"\s+"
+MAX_RECORDS = 5000      # the most records one request may carry
+MAX_TEXT = 5000         # the longest note or suggested value a record may carry, in characters
 
 
 class Invalid(ValueError):
@@ -58,11 +65,30 @@ def read_log(d):
     return read_jsonl(Path(d) / LOG_NAME)
 
 
-def latest(records, field="key"):
-    """Field value to the last record carrying it. The log is append-only, so the latest wins."""
-    out = {}
+def _when(ts):
+    """A ts as seconds since the epoch, or None when it is missing or does not parse."""
+    try:
+        return datetime.fromisoformat(str(ts)).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def in_time_order(records):
+    """The records oldest first by ts. Records with the same ts keep their log order. A record with no readable ts sorts with the record before it."""
+    at, keyed = float("-inf"), []
     for r in records:
-        if r.get(field):
+        t = _when(r.get("ts")) if isinstance(r, dict) else None
+        if t is not None:
+            at = t
+        keyed.append((at, r))
+    return [r for _, r in sorted(keyed, key=lambda x: x[0])]
+
+
+def latest(records, field="key"):
+    """Field value to the latest record carrying it, latest by ts (in_time_order)."""
+    out = {}
+    for r in in_time_order(records):
+        if isinstance(r, dict) and r.get(field):
             out[r[field]] = r
     return out
 
@@ -112,14 +138,24 @@ def rollback(path, size):
             f.truncate(size)
 
 
-def write_derived(d, ts):
-    """Regenerate <d>/review_decisions.json from the whole log (latest record per key)."""
+def write_derived(d, ts, write=None):
+    """Regenerate <d>/review_decisions.json from the whole log (latest record per key). `write` is the atomic_write to use; the bound store passes the one in force when the write runs. Without it, this module's is used."""
     body = {"generated": ts, "decisions": latest(read_log(d))}
-    atomic_write(Path(d) / DERIVED_NAME, json.dumps(body, indent=1, ensure_ascii=False) + "\n")
+    (write or atomic_write)(Path(d) / DERIVED_NAME, json.dumps(body, indent=1, ensure_ascii=False) + "\n")
 
 
-_HELPERS = {"atomic_write": atomic_write, "append_jsonl": append_jsonl, "rollback": rollback,
-            "write_derived": write_derived}       # the originals, so a replaced one can be told apart
+_WRITE_HELPERS = ("atomic_write", "append_jsonl", "write_derived", "rollback")
+
+
+def page_rules():
+    """The checks the single-file page makes the same way the store does, as plain JSON (TrackerConfig.page_block puts them in the page). The patterns are written so that JavaScript's RegExp reads them the same way."""
+    return {"max_records": MAX_RECORDS, "max_text": MAX_TEXT,
+            "initials": _INITIALS_RE.pattern, "email": _EMAIL_RE.pattern, "url": _URL_RE.pattern,
+            "email_split": _EMAIL_SPLIT, "name_split": _NAME_SPLIT,
+            # only a kind in line_kinds is a line, so an empty line_kinds refuses every line
+            "listed_line_kinds_only": True,
+            # an undo keeps the reference the request gave
+            "undo_keeps_reference": True}
 
 
 def cards(data, config):
@@ -159,7 +195,7 @@ def bind(config, root=None, into=None):
         if not v or v in machines or _INITIALS_RE.match(v):
             return who
         m = _EMAIL_RE.match(v)
-        parts = [t for t in re.split(r"[._+\-]+" if m else r"\s+", m.group(1) if m else v) if t[:1].isalpha()]
+        parts = [t for t in re.split(_EMAIL_SPLIT if m else _NAME_SPLIT, m.group(1) if m else v) if t[:1].isalpha()]
         if not parts:
             return who
         return (parts[0][0] + (parts[-1][0] if len(parts) > 1 else "")).upper()
@@ -170,9 +206,9 @@ def bind(config, root=None, into=None):
 
     def calls(records):
         """Key to {"person": the latest person record (an undo included), "machine": the latest
-        machine record, "last": the latest record of either}."""
+        machine record, "last": the latest record of either}, replayed in time order."""
         out = {}
-        for r in records:
+        for r in in_time_order(records):
             k = r.get("key")
             if not k:
                 continue
@@ -273,6 +309,18 @@ def bind(config, root=None, into=None):
 
     # ---- validation --------------------------------------------------------------
 
+    def check_list(records, what):
+        if not isinstance(records, list) or not records:
+            raise Invalid(f"expected a non-empty list of {what} records")
+        if len(records) > MAX_RECORDS:
+            raise Invalid(f"too many records in one request ({len(records)})")
+
+    def text(i, v, what):
+        s = str(v or "")
+        if len(s) > MAX_TEXT:
+            raise Invalid(f"record {i}: the {what} is longer than {MAX_TEXT} characters")
+        return s
+
     def check_ref(i, ref):
         if ref and not _URL_RE.match(ref):
             raise Invalid(f"record {i}: reference {ref!r} is not a web address (http or https)")
@@ -282,8 +330,7 @@ def bind(config, root=None, into=None):
         a bad request. A request is {key, decision, suggested_value?, reference?, note?} or
         {key, undo: true}; an undo is stored as undecided: true and keeps the line's default
         decision."""
-        if not isinstance(records, list) or not records:
-            raise Invalid("expected a non-empty list of decision records")
+        check_list(records, "decision")
         idx = index(data)
         out = []
         for i, r in enumerate(records):
@@ -305,8 +352,8 @@ def bind(config, root=None, into=None):
                 raise Invalid(f"record {i}: no decision given (a bare key never defaults to accept)")
             if decision not in config.decisions:
                 raise Invalid(f"record {i}: decision {decision!r} is not one of {', '.join(sorted(config.decisions))}")
-            note = str(r.get("note") or "")
-            sv = str(r.get("suggested_value") or "")
+            note = text(i, r.get("note"), "note")
+            sv = text(i, r.get("suggested_value"), "suggested value")
             if decision == "suggest" and not undo and not (sv.strip() or note.strip()):
                 raise Invalid(f"record {i}: a suggestion needs a suggested_value or a note")
             rec = {"key": key, "dir": obj["dir"], "pid": card["pid"]}
@@ -324,8 +371,7 @@ def bind(config, root=None, into=None):
         """Normalized item call records, or Invalid. A request is {key, call, reference?, note?}
         or {key, undo: true}. The call must be in the vocabulary for the item's kind, and a
         (kind, call) pair in config.note_required needs a note."""
-        if not isinstance(records, list) or not records:
-            raise Invalid("expected a non-empty list of item records")
+        check_list(records, "item")
         idx = index(data)
         out = []
         for i, r in enumerate(records):
@@ -342,7 +388,7 @@ def bind(config, root=None, into=None):
             vocab = config.calls_for(obj.get("kind"))
             if not undo and call not in vocab:
                 raise Invalid(f"record {i}: call {call!r} is not one of {', '.join(vocab)} for a {obj.get('kind')} item")
-            note = str(r.get("note") or "")
+            note = text(i, r.get("note"), "note")
             if not undo and (obj.get("kind"), call) in config.note_required and not note.strip():
                 raise Invalid(f"record {i}: {call.replace('_', ' ')} needs a note saying why")
             rec = {"key": key, "dir": obj["dir"], "pid": card["pid"]}
@@ -363,8 +409,7 @@ def bind(config, root=None, into=None):
             """Normalized marker records, or Invalid. A request is {key, on, note?} for a line or
             item, or {pid, dir, on, note?} for a whole card. The stored key carries the marker's
             prefix, so a marker never collides with the decision on the same record."""
-            if not isinstance(records, list) or not records:
-                raise Invalid(f"expected a non-empty list of {name} records")
+            check_list(records, name)
             idx = index(data)
             by_card = {(p.get("dir"), p["pid"]): p for p in cards(data, config)}
             out = []
@@ -372,7 +417,7 @@ def bind(config, root=None, into=None):
                 if not isinstance(r, dict):
                     raise Invalid(f"record {i}: not an object")
                 on = bool(r.get("on", True))
-                note = str(r.get("note") or "")
+                note = text(i, r.get("note"), "note")
                 key = r.get("key")
                 if key:
                     if key not in idx:
@@ -394,18 +439,18 @@ def bind(config, root=None, into=None):
 
     # ---- writing -----------------------------------------------------------------
 
-    def hook(name, default):
-        """The write helper to call now: the binding namespace's, when a test replaced it there;
-        else this module's, when a test replaced it here; else the default."""
-        f = getattr(api, name, default)
-        if f is default and globals()[name] is not _HELPERS[name]:
-            return globals()[name]
-        return f
+    installed = {n: globals()[n] for n in _WRITE_HELPERS}     # as bind puts them in the namespace
 
-    def bound_write_derived(d, ts):
-        """Regenerate <d>/review_decisions.json from the whole log (latest record per key)."""
-        body = {"generated": ts, "decisions": latest(read_log(d))}
-        hook("atomic_write", atomic_write)(Path(d) / DERIVED_NAME, json.dumps(body, indent=1, ensure_ascii=False) + "\n")
+    def helper(name):
+        """The write helper in force now: the namespace's when a test replaced it there, else this
+        module's (which a test may have replaced too). The real write_derived comes back set to
+        write through the atomic_write in force."""
+        f = getattr(api, name, None)
+        if f is None or f is installed[name]:
+            f = globals()[name]
+        if f is installed["write_derived"]:
+            return partial(f, write=helper("atomic_write"))
+        return f
 
     def _write(recs, dirs, stamp=True):
         """Per touched dir (the caller holds _LOCK): append to review_log.jsonl and regenerate
@@ -424,15 +469,15 @@ def bind(config, root=None, into=None):
         try:
             for label, rs in by_dir.items():
                 log = Path(dirs[label]) / LOG_NAME
-                size = hook("append_jsonl", append_jsonl)(log, rs)
+                size = helper("append_jsonl")(log, rs)
                 done.append((dirs[label], log, size))
-                hook("write_derived", bound_write_derived)(dirs[label], ts)
+                helper("write_derived")(dirs[label], ts)
         except Exception:
             for d, log, size in done:
-                hook("rollback", rollback)(log, size)
+                helper("rollback")(log, size)
             for d, log, size in done[:-1]:      # dirs whose derived file already moved: re-derive
                 try:
-                    hook("write_derived", bound_write_derived)(d, ts)
+                    helper("write_derived")(d, ts)
                 except Exception:
                     pass
             raise
@@ -490,7 +535,7 @@ def bind(config, root=None, into=None):
         is_machine=is_machine, initials=initials, reviewed=reviewed, calls=calls, speaker=speaker,
         legacy_keys=legacy, read_jsonl=read_jsonl, read_log=read_log, latest=latest, read_decisions=read_decisions,
         dir_paths=dir_paths, index=index, overlay=overlay, now=now, validate=validate, validate_items=validate_items,
-        atomic_write=atomic_write, append_jsonl=append_jsonl, rollback=rollback, write_derived=bound_write_derived,
+        in_time_order=in_time_order, page_rules=page_rules, MAX_RECORDS=MAX_RECORDS, MAX_TEXT=MAX_TEXT, **installed,
         _write=_write, decide=decide, append_records=append_records, record_items=record_items,
         cards=lambda data: cards(data, config), marker_key=marker_key,
     )

@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from review_core.store import page_rules
+
 
 DEFAULT_DECISIONS = ("accept", "hold", "reject", "suggest")
 DEFAULT_OTHER_CALLS = ("noted", "todo", "dismissed")
@@ -86,7 +88,8 @@ class TrackerConfig:
 
     def page_block(self):
         """The tracker block the page's store reads (window.REVIEW_STATIC.tracker): only plain
-        JSON values, no hooks."""
+        JSON values, no hooks. `rules` is store.page_rules(), the checks the page has to make the
+        way the store makes them."""
         return {"name": self.name, "title": self.title, "cards_key": self.cards_key,
                 "line_kinds": list(self.line_kinds), "item_kinds": list(self.item_kinds),
                 "decisions": sorted(self.decisions),
@@ -95,7 +98,8 @@ class TrackerConfig:
                 "note_required": sorted(f"{k}:{c}" for k, c in self.note_required),
                 "machine_reviewers": sorted(self.machine_reviewers),
                 "info_kinds": sorted(self.info_kinds), "references": self.references,
-                "caps": dict(self.caps), "markers": {k: dict(v) for k, v in self.markers.items()}}
+                "caps": dict(self.caps), "markers": {k: dict(v) for k, v in self.markers.items()},
+                "rules": page_rules()}
 
 
 def web_file(config, name):
