@@ -665,6 +665,16 @@
     setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
     return Promise.resolve({name: fname, count: recs.length});
   }
+  // one file for the viewer to keep (a route's geometry): the artifact viewer's downloads when the page has them, otherwise a link click. -> the name saved
+  function saveFile(name, text, type) {
+    if (G.dl) return G.dl.save({filename: name, data: text}).then(function () { return name; },
+      function (e) { throw new Error(e && e.code === "declined" ? "download cancelled" : (e && e.message) || "download failed"); });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([text], {type: (type || "application/json") + ";charset=utf-8"})); a.download = name;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 1000);
+    return Promise.resolve(name);
+  }
   // "push to log": make sure the shared log is current, then leave a request document in the requests collection for a Claude Code session watching this artifact.
   // Only calls the log does not have yet count (the import skips records already in the log by id, so a push only ever adds what is new). A call is left out when
   //   - its id is in CFG.logged, the page records the log already held when the page was built (build_static.logged_ids), or
@@ -753,6 +763,7 @@
     }),
     item: wrap(validateItems),
     download: download,
+    saveFile: saveFile,
     requestPush: requestPush,
     logs: logs,
     // for tests and for a reviewer who wants to look: this browser's raw log

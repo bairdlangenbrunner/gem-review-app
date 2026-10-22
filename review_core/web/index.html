@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{title}}</title>
 <link rel="stylesheet" href="/core/style.css">
+<link rel="stylesheet" href="/core/leaflet.css">
 <link rel="stylesheet" href="/tracker/ext.css">
 </head>
 <body>
@@ -63,7 +64,8 @@
 <span class="slot" data-slot="card-extra"></span>
 <dialog id="dialog"></dialog>
 
-<!-- review_core/build_static.py inserts static_store.js before app.js in the built page -->
+<!-- review_core/build_static.py inserts static_store.js before geo.js and app.js in the built page -->
+<script src="/core/geo.js"></script>
 <script src="/core/app.js"></script>
 <script src="/tracker/ext.js"></script>
 </body>

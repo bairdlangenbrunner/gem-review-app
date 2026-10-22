@@ -4,13 +4,13 @@ The single-file review page: the shared page plus one tracker's extension, with 
 The page has no doctype, html, head or body tags of its own: the Artifact tool wraps it, and a browser opening the file from disk does the same. In order it holds:
 
   1. <title> (the tracker's title, or the one given)
-  2. <style>: review_core/web/style.css, then the tracker's web/ext.css
+  2. <style>: review_core/web/style.css, review_core/web/leaflet.css (the route maps), then the tracker's web/ext.css
   3. the body of review_core/web/index.html, with its local script and stylesheet tags taken out
   4. the dataset: <script type="application/octet-stream" id="review-blob">, base64 of gzip {data, index, legacy}, where legacy (left out when empty) is legacy_map
   5. <script>window.REVIEW_STATIC = {reviewer, built, ledger_url, logged, tracker}</script>, where tracker is TrackerConfig.page_block() and logged is the ids of page records already in the decision log (logged_ids)
-  6. review_core/web/static_store.js, review_core/web/app.js, then the tracker's web/ext.js
+  6. review_core/web/static_store.js, review_core/web/geo.js, review_core/web/app.js, then the tracker's web/ext.js
 
-A missing ext.css or ext.js counts as empty. The dataset and its reviewer settings come before the scripts so every script can read them as it loads.
+A missing ext.css, ext.js, geo.js or leaflet.css counts as empty. The page refuses route geometry (every line's `geo`) over MAX_GEO_BYTES. The dataset and its reviewer settings come before the scripts so every script can read them as it loads.
 
 The packed index is {"v": 2, "dirs": [label], "keys": [{rest: entry}]}, the two lists aligned, where rest is the key without its "<dir>::" prefix. A line entry is {k kind, p pid, d default (left out when "accept")}; an item entry is {i kind, p pid, c0 the call the dataset already holds}. A tracker adds fields through config.index_entry (GOGPT: f, the record fields), and through config.index_extras for anything that needs the whole index or dataset (pipelines: concern answers x, the top-level w and cmd). The page refuses a key that is missing from the index, and a tracker's ext.js reads the fields it added from it.
 
@@ -27,8 +27,10 @@ from review_core.config import web_file
 from review_core.store import cards, read_log
 
 CORE_WEB = Path(__file__).resolve().parent / "web"
-CORE_SCRIPTS = ("static_store.js", "app.js")
+CORE_SCRIPTS = ("static_store.js", "geo.js", "app.js")
+OPTIONAL_CORE = ("geo.js", "leaflet.css")   # a core folder without them builds as before
 MAX_BYTES = 16 * 1024 * 1024          # the Artifact tool's page limit
+MAX_GEO_BYTES = 3 * 1024 * 1024       # every line.geo together (docs/plan.md, "Geo"); past it, publish the geometry as artifact files
 BLOB_ID = "review-blob"
 
 
@@ -110,6 +112,21 @@ def _read(path):
     return Path(path).read_text(encoding="utf-8") if path else ""
 
 
+def _core(name):
+    p = CORE_WEB / name
+    return "" if name in OPTIONAL_CORE and not p.is_file() else _read(p)
+
+
+def geo_bytes(data, config):
+    """Bytes of every line's `geo` (pipelines route geometry) as the blob's JSON holds them, before gzip."""
+    n = 0
+    for card in cards(data, config):
+        for o in card.get("lines", []):
+            if o.get("geo"):
+                n += len(json.dumps(o["geo"], ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    return n
+
+
 def _inline_js(name, text):
     # an inline script ends at the first "</script" whatever the JS meant by it
     if re.search(r"</script", text, re.I) or "<!--" in text:
@@ -131,7 +148,7 @@ def logged_ids(data, root):
 def render(data, reviewer, config, index=None, title=None, ledger_url="", root=None):
     """The page as one html string (see the module docstring). `index` defaults to pack_index. With `root` (the researcher repo, which the dir labels are relative to), the page also gets `logged`, the ids logged_ids finds."""
     html = (CORE_WEB / "index.html").read_text(encoding="utf-8")
-    css = _read(CORE_WEB / "style.css").rstrip() + "\n" + _read(web_file(config, "ext.css")).rstrip()
+    css = "\n".join(_core(n).rstrip() for n in ("style.css", "leaflet.css")) + "\n" + _read(web_file(config, "ext.css")).rstrip()
     if "</style" in css.lower():
         raise SystemExit("style.css or ext.css contains '</style'")
     title = escape(title or config.title, quote=False)
@@ -148,7 +165,11 @@ def render(data, reviewer, config, index=None, title=None, ledger_url="", root=N
     cfg = json.dumps({"reviewer": reviewer or "", "built": data.get("built", ""), "ledger_url": ledger_url or "",
                       "logged": logged_ids(data, root) if root else [],
                       "tracker": config.page_block()}, ensure_ascii=False).replace("</", "<\\/")
-    scripts = [_inline_js(n, _read(CORE_WEB / n)) for n in CORE_SCRIPTS]
+    gb = geo_bytes(data, config)
+    if gb > MAX_GEO_BYTES:
+        raise SystemExit(f"the route geometry in this page is {gb / 1048576:.1f} MB, over the {MAX_GEO_BYTES // 1048576} MB limit: "
+                         "publish the geometry as artifact files fetched on demand (docs/plan.md, Geo)")
+    scripts = [_inline_js(n, _core(n)) for n in CORE_SCRIPTS if _core(n).strip() or n not in OPTIONAL_CORE]
     ext_js = _read(web_file(config, "ext.js"))
     if ext_js.strip():
         scripts.append(_inline_js("ext.js", ext_js))

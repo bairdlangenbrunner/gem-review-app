@@ -35,6 +35,7 @@ gem-review-app/
     web/app.js                 core page logic; exposes window.ReviewApp and ReviewApp.define()
     web/style.css              shared styles and themes
     web/static_store.js        single-file and artifact database adapter
+    web/geo.js                 route maps, basemaps, tile math, provenance images (see Geo below)
   scripts/check_consumers.py   runs the sibling repos' page checks and hooks
   trackers/
     gogpt/   __init__.py  config.py  web/ext.js  web/ext.css
@@ -103,6 +104,35 @@ The core owns: severity and tier rendering, decisions and undo, the note box and
 ## Single-file page (blob form)
 
 The builder takes the pipelines form for every tracker: the dataset is gzip-compressed, base64-embedded, with a packed key index, and the page decompresses it at boot. The GOGPT inline-JSON form is retired. The built page holds, in order: the title, one `<style>` with `style.css` then the tracker `ext.css`, the body of `index.html` with its local script and link tags removed, the dataset blob (`<script type="application/octet-stream" id="review-blob">`, base64 of gzip `{data, index, legacy}`), a boot script `window.REVIEW_STATIC = {reviewer, built, ledger_url, tracker}` where `tracker` is `TrackerConfig.page_block()` (the plain-JSON vocabulary: kinds, calls, note rules, markers, caps, and `rules`), then `static_store.js`, `app.js` and the tracker `ext.js`. The data and settings come before the scripts so every script can read them as it loads. `legacy` is `build_static.legacy_map()`: each line, item and marker key with the older keys the tracker's `legacy_keys` gives for it, so a call a browser logged under an older key still speaks for the line, by the same rule as `store.speaker`. `rules` is `store.page_rules()`: the request limits, the initials, email and web address patterns, and the line-kind and undo-reference rules, so `static_store.js` checks a record exactly as the store does without keeping its own copy of them. Artifact pages keep their capabilities (`db`, `user`, `downloads`) and their existing URLs; each researcher repo's `build_all.py` and `artifacts.json` drive the rebuild and republish.
+
+## Geo: maps, routes already added, how a route was made (contract, 2026-10-21)
+
+The pipelines plan is `pipelines-researcher/docs/plans/2026-10-21_review-app-route-maps.md`; this section is the part both trackers build against. The core still names no tracker: it ships the map and image tools and two field rules, and each tracker decides which of its lines carry them.
+
+**Shared line fields** (the core and both extensions read them the same way):
+
+- `line.applied`: `{by, at, ...}`. Any `by` means the change has already landed outside the page, and the line renders as done: no decision buttons, a chip saying when, never counted as undecided. `by` values in use: `push` (push.py wrote the cells), `routes_repo` (pipelines: the candidate geometry is already in the routes repo and the sheet row is mapped; adds `commit`, `sheet`), `apply_route_candidates` (the marker the §8 apply writes into the staged record from 2026-10-21; adds `commit`, `plan_token`, `backup`). A tracker may add fields; the core reads only `by` and `at`.
+- `line.provenance`: `{text, facts, images, control_points}`, how the proposed value or geometry was obtained. `text` is one short plain paragraph. `facts` is a list of `[label, value]` or `[label, value, url]`. `images` is a list of `{role, caption, url, path, width, height, source_url}` with `role` one of `map` (the snapshot the value was read or traced from), `overlay` (the trace drawn on that snapshot) or `render`; `path` is the repo-relative source file, `url` is filled only from the assets manifest (below), and an image with no `url` is listed by caption and not drawn. `control_points` is a list of `{name, px: [x, y], lon, lat, ref, residual_km}`. Every key is optional.
+
+**Tracker-shaped fields** (one tracker each; the core never reads them):
+
+- `line.geo` (pipelines, route lines): `{candidate, current, bbox, length_km, current_length_km, file, start_name, end_name}`. `candidate` and `current` are GeoJSON FeatureCollections (`current` is the routes-repo geometry for the ProjectID, or null), `bbox` is `[west, south, east, north]` over both, `file` is the candidate's path relative to its staging dir (the loopback server's `/geo/<dir>/<file>`). Rides in the dataset blob with everything else.
+- `line.location` (GOGPT, point lines): `{method, current, proposed, moved_m, image, control_points, fit_m}` as `review_data.py` builds it today; `current` and `proposed` are `{lat, lon, accuracy, satellite, pin}`.
+
+**`web/geo.js`** (core, inlined into the page before `app.js`, served at `/core/geo.js` by the loopback server) sets `window.ReviewGeo`:
+
+- `BASEMAPS`: `map` (Esri World Street Map; CARTO Voyager was the first choice, but its tiles came back "API key required" on 2026-10-21) and `satellite` (Esri World Imagery, the tiles GOGPT already uses), each `{url, attribution, maxZoom, subdomains}`. OpenStreetMap's own tile servers are not used (their usage policy excludes this kind of app).
+- `tileXY(lat, lon, z)`: Web Mercator tile coordinates, the same math as `scripts/geo.py::tile_xy`.
+- `basemap()` and `setBasemap(name)`: the page-wide choice, kept in localStorage (wrapped in try/catch; `map` when storage is unavailable). Changing it redraws every live map.
+- `loadLeaflet()`: one promise for the whole page; injects the Leaflet 1.9.4 script from cdnjs (pinned, with its SRI hash) the first time it is called, rejects after 15 seconds or on a load error. The Leaflet stylesheet is not fetched: it ships inlined as `web/leaflet.css` (image rules taken out), because the artifact page loads stylesheets only from Google Fonts. Vector layers go on only after the map has a view; Leaflet throws otherwise.
+- `mapSlot(id, geo, opts)`: the HTML for one map, a `div.rmap` carrying `id` (the line key, plus a pane suffix when one line has two maps). The geometry is kept in a registry under `id` (a later call with the same `id` replaces it). An observer draws the map the first time the slot scrolls into view, so cards render as strings as they always have and Leaflet loads only when a map is actually seen. A redraw of the same `id` keeps the last view. `opts`: `{show: "candidate" | "current" | "both", label}`.
+- Map behavior: basemap toggle buttons on the map, the candidate in the page accent color and the current route in gray, start and end markers named from `geo.start_name` and `geo.end_name`, fit to `bbox`, scroll-wheel zoom only after a click on the map, Leaflet keyboard handling off (the page owns the keys). If Leaflet does not load, the slot shows `map did not load` and nothing else breaks.
+- `syncMaps(idA, idB)`: moving one map moves the other (the side-by-side panes for a route replacement, step 3).
+- `imageBlock(images)` and `controlPointTable(points)`: the provenance pictures (map and overlay side by side, click for full size) and the control-point table (step 4).
+
+**Builder rule.** `build_static.py` inlines `geo.js` between `static_store.js` and `app.js` (a core folder without it builds as before), reports the bytes of every `line.geo` in the dataset, and refuses a page whose geo payload is over 3 MB; the fallback at that point is to publish the geometry as artifact files fetched on demand.
+
+**Assets** (step 4). Map snapshots never go in the page. `review_core/assets.py` makes the downscaled copy (JPEG, long edge 1600 px, quality 80; a PNG under 1 MB stays PNG), names it by the sha256 of the source file, and keeps the per-repo manifest (`review_app/assets.json`, committed: sha256 to `{url, artifact, uploaded, bytes}`). The build fills `images[].url` from the manifest and lists what is missing; the files go up with the Artifact tool as assets of the page that shows them, and the page declares the `assets` capability. The loopback server serves the same files at `/asset/<sha>.<ext>` from `work/review_assets/`, and the page uses that path when `window.REVIEW_STATIC` is absent.
 
 ## Asks from the researcher repos
 

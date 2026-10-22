@@ -83,3 +83,46 @@ def test_logged_ids_are_the_imported_page_records(web, tmp_path):
     assert cfg_js["logged"] == ["p0", "p1"]
     html = build_static.render(data, "BL", make_config(web_dir=web))
     assert json.loads(re.search(r"window.REVIEW_STATIC = (\{.*?\});</script>", html).group(1))["logged"] == []
+
+
+def test_geo_script_and_leaflet_css_are_inlined(web):
+    geo_js = "window.ReviewGeo = {a: 1};\nvar GEO_END = 1;"
+    (build_static.CORE_WEB / "geo.js").write_text(geo_js)
+    (build_static.CORE_WEB / "leaflet.css").write_text(".leaflet-container{overflow:hidden}")
+    (web / "ext.css").write_text(".x{}")
+    (web / "ext.js").write_text("var EXT = 1;")
+    html = build_static.render(make_data(["s"]), "BL", make_config(web_dir=web))
+    assert geo_js in html and ".leaflet-container{overflow:hidden}" in html
+    # scripts: the store, then geo.js, then app.js, then the tracker's; styles: style.css, leaflet.css, then ext.css
+    marks = ["var STORE = 1;", "window.ReviewGeo", "var APP = 1;", "var EXT = 1;"]
+    at = [html.index(m) for m in marks]
+    assert at == sorted(at)
+    assert html.index("body{color:#000}") < html.index(".leaflet-container") < html.index(".x{}")
+    assert html.count("<script>") == 5
+
+
+def test_missing_geo_script_and_leaflet_css_build_as_before(web):
+    assert not (build_static.CORE_WEB / "geo.js").exists() and not (build_static.CORE_WEB / "leaflet.css").exists()
+    html = build_static.render(make_data(["s"]), "BL", make_config(web_dir=web))
+    assert "ReviewGeo" not in html and "leaflet" not in html
+    assert "var STORE = 1;" in html and "var APP = 1;" in html
+    # a core script that is not optional is still required
+    (build_static.CORE_WEB / "app.js").unlink()
+    with pytest.raises(FileNotFoundError):
+        build_static.render(make_data(["s"]), "BL", make_config(web_dir=web))
+
+
+def test_route_geometry_over_the_limit_is_refused(web):
+    def with_geo(n):
+        data = make_data(["s"])
+        data["widgets"][0]["lines"][0]["geo"] = {"candidate": {"coords": "x" * n}}
+        return data
+    cfg = make_config(web_dir=web)
+    small = with_geo(1000)
+    assert 1000 < build_static.geo_bytes(small, cfg) < 1100
+    assert build_static.geo_bytes(make_data(["s"]), cfg) == 0
+    assert build_static.read_blob(build_static.render(small, "BL", cfg))["data"] == small
+    big = with_geo(build_static.MAX_GEO_BYTES)
+    assert build_static.geo_bytes(big, cfg) > build_static.MAX_GEO_BYTES
+    with pytest.raises(SystemExit, match=r"route geometry.*3 MB limit"):
+        build_static.render(big, "BL", cfg)

@@ -426,10 +426,16 @@
       else facts.push(chip(l.publishers + " publishers"));
       return pairTable(rows) + '<div class="facts">' + facts.join(" ") + "</div>";
     }
+    function geoPath(l) { return l.geometry_file ? "/geo/" + encodeURI(String(l.dir).replace(/^batches\//, "") + "/" + l.geometry_file) : ""; }
+    // the candidate as a file: the loopback server serves it at /geo/; the single-file page saves it from the dataset (Store.saveFile)
+    function geoDownload(l) {
+      var name = String(l.geometry_file || "").split("/").pop();
+      if (A.Store.saveFile) return l.geo && l.geo.candidate ? '<button type="button" class="ghost" data-geosave="' + esc(l.key) + '">download geojson</button> <code>' + esc(name) + "</code>" : "";
+      var geo = geoPath(l);
+      return geo ? '<a href="' + esc(geo) + '" download="' + esc(name) + '">download geojson</a> <code>' + esc(name) + "</code>" : "";
+    }
     function routeBody(l) {
-      var geo = l.geometry_file ? "/geo/" + encodeURI(String(l.dir).replace(/^batches\//, "") + "/" + l.geometry_file) : "";
-      var geoA = !geo ? "" : (A.Store.showGeo ? '<a href="#" class="only" data-geo="' + esc(l.dir + "/" + l.geometry_file) + '">'
-        : '<a href="' + esc(geo) + '" target="_blank" rel="noopener">');
+      var dl = geoDownload(l);
       var was = l.current_route_accuracy, sug = l.suggested_route_accuracy;
       var rows = [
         ["candidate length", l.length_km == null ? "" : l.length_km + " km"],
@@ -439,8 +445,9 @@
       rows.push('<div class="k">RouteAccuracy</div><div class="v">' + (blankv(was) ? "" : '<span class="was">' + esc(was) + "</span>") +
         (blankv(sug) ? "" : '<span class="arrow">→</span><span class="newv">' + esc(sug) + "</span>" + copyBtn(sug)) + "</div>");
       rows.push('<div class="k">QC</div><div class="v">' + (l.qc_passed ? chip("✓ passed", "ok") : chip("✗ did not pass", "bad")) + "</div>");
-      rows.push('<div class="k">geometry</div><div class="v">' + (geo ? geoA + "<code>" + esc(l.geometry_file) + "</code> ↗</a>" : '<span class="muted">none</span>') + "</div>");
-      return '<div class="chg">' + rows.join("") + '</div><div class="faint" style="margin-top:4px">accepting records approval for the §8 apply; it writes no cell.</div>';
+      rows.push('<div class="k">geometry</div><div class="v">' + (dl || '<span class="muted">none</span>') + "</div>");
+      var map = l.geo && l.geo.candidate && window.ReviewGeo ? window.ReviewGeo.mapSlot(l.key, l.geo, {show: "candidate", label: "proposed"}) : "";
+      return map + '<div class="chg">' + rows.join("") + '</div><div class="faint" style="margin-top:4px">accepting records approval for the §8 apply; it writes no cell.</div>';
     }
     function newRowBody(l) {
       var vals = l.proposed_values || {}, refs = l.proposed_refs || {};
@@ -1100,7 +1107,7 @@
           Object.keys(refs || {}).forEach(function (c) { if (!out && refs[c] && refs[c].length) out = refs[c][0]; });
           return out;
         }
-        if (l.kind === "route") return l.geometry_file ? "/geo/" + encodeURI(String(l.dir).replace(/^batches\//, "") + "/" + l.geometry_file) : "";
+        if (l.kind === "route") return window.REVIEW_STATIC ? (refs && refs[0]) || "" : geoPath(l);
         return (refs && refs[0]) || splitUrls(l.current_ref)[0] || "";
       },
       openRef: function (u, l) {
@@ -1111,6 +1118,13 @@
       onCardClick: function (e) {
         var ga = e.target.closest("[data-geo]");
         if (ga) { e.preventDefault(); if (A.Store.showGeo) A.Store.showGeo(ga.getAttribute("data-geo")); return true; }
+        var gs = e.target.closest("button[data-geosave]");
+        if (gs) {
+          var gl = A.LINE_BY_KEY[gs.getAttribute("data-geosave")];
+          if (gl && gl.geo) A.Store.saveFile(String(gl.geometry_file || gl.pid + ".geojson").split("/").pop().replace(/\.geojson$/, "") + ".geojson.json",
+            JSON.stringify(gl.geo.candidate), "application/geo+json").then(function (n) { A.toast(n + " saved"); }, function (err) { A.toast(err.message); });
+          return true;
+        }
         var cb = e.target.closest("button[data-candidate]");
         if (!cb) return false;
         var ln = cb.closest(".line");
