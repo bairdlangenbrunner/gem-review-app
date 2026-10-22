@@ -390,3 +390,58 @@ def test_cli_hook_prints_the_contract_and_saves_the_cache(env, capsys, monkeypat
     run_cli(env, ["--hook", "UserPromptSubmit"])
     out = json.loads(capsys.readouterr().out)
     assert out["stale"] == [] and "page check failed" in out["warnings"][0]
+
+
+A1, A2 = "a" * 64 + ".jpg", "b" * 64 + ".png"
+
+
+def with_assets(env, names):
+    manifest = env["root"] / "assets.json"
+    env["adapter"].assets = lambda e: list(names)
+    env["adapter"].asset_manifest = manifest
+    return manifest
+
+
+def test_missing_assets_make_a_fresh_page_stale(env):
+    manifest = with_assets(env, [A1, A2, A1])
+    publish(env)
+    r = status(env)
+    assert r["status"] == "stale" and r["reasons"] == ["assets missing: 2"]       # fresh on inputs, but not complete
+    from review_core import assets
+    assets.record(manifest, "https://claude.ai/artifact/x", {A1: "https://u/1"})
+    assert status(env)["reasons"] == ["assets missing: 1"]
+    assets.record(manifest, "https://claude.ai/artifact/x", {A2: "https://u/2"})
+    assert status(env)["status"] == "fresh" and status(env)["reasons"] == []
+
+
+def test_assets_uploaded_to_another_page_do_not_count(env):
+    from review_core import assets
+    manifest = with_assets(env, [A1])
+    assets.record(manifest, "https://claude.ai/artifact/other", {A1: "https://u/1"})
+    publish(env)
+    assert status(env)["reasons"] == ["assets missing: 1"]
+
+
+def test_assets_reason_comes_after_the_input_reasons(env):
+    with_assets(env, [A1])
+    publish(env)
+    (env["root"] / "builder.py").write_text("v2")
+    assert status(env)["reasons"] == ["builder changed", "assets missing: 1"]
+
+
+def test_cli_assets_lists_the_files_to_upload(env, capsys):
+    from review_core import assets
+    manifest = with_assets(env, [A1, A2])
+    assets.record(manifest, "https://claude.ai/artifact/x", {A2: "https://u/2"})
+    assert run_cli(env, ["--assets", "one"]) == 0
+    cap = capsys.readouterr()
+    assert cap.out.splitlines() == [str(env["root"] / "work" / "review_assets" / A1)]
+    assert cap.err.strip() == "1 to upload for https://claude.ai/artifact/x"
+
+
+def test_cli_assets_without_an_assets_list_says_so(env, capsys):
+    assert run_cli(env, ["--assets", "one"]) == 0
+    cap = capsys.readouterr()
+    assert cap.out == "" and "no pictures" in cap.err
+    with pytest.raises(SystemExit, match="no page named nope"):
+        run_cli(env, ["--assets", "nope"])

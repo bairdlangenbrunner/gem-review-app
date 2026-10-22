@@ -40,6 +40,8 @@ class PageAdapter:
     extra_inputs(entry) -> {part name: value}: the manifest sha, the snapshot name, an export csv sha.
     builder_files -> repo files whose change means rebuild.
     cache -> a FileCache, so files whose size and modification time did not change are not read again (None: read every file).
+    assets(entry) -> the picture names (<sha256>.jpg or .png) the entry's page shows; with asset_manifest, check() calls the page stale while any is not uploaded to it.
+    asset_manifest -> the repo's assets manifest path (review_core/assets.py), absolute or relative to `root`.
     """
     root: Path
     resolve_dirs: Callable
@@ -49,6 +51,8 @@ class PageAdapter:
     builder_files: tuple = ()
     build: Optional[Callable] = None
     cache: Optional["FileCache"] = None
+    assets: Optional[Callable] = None
+    asset_manifest: Optional[Path] = None
 
 
 class FileCache:
@@ -199,6 +203,15 @@ def reasons(old, new):
     return out
 
 
+def missing_assets(entry, adapter):
+    """The asset names the entry's page shows that it has not uploaded (none when the adapter lists no assets)."""
+    if not adapter.assets:
+        return []
+    from review_core import assets
+    manifest = assets.load_manifest(_abs(adapter.root, adapter.asset_manifest)) if adapter.asset_manifest else {}
+    return assets.missing(adapter.assets(entry), manifest, _url(entry))
+
+
 def check(entries, adapter, config):
     """One report per entry: {name, kind, url, status: fresh|stale|unmarked, reasons, fingerprint, parts}."""
     out = []
@@ -213,6 +226,11 @@ def check(entries, adapter, config):
             rep["status"] = "fresh"
         else:
             rep["status"], rep["reasons"] = "stale", reasons(pub.get("parts", {}), parts)
+        gone = missing_assets(e, adapter)
+        if gone:
+            rep["reasons"].append(f"assets missing: {len(gone)}")
+            if rep["status"] == "fresh":
+                rep["status"] = "stale"
         out.append(rep)
     return out
 
@@ -406,6 +424,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
         --check               fresh / stale (why) / unmarked per page; exit 1 if any is not fresh
         [--only NAME] [--all] build the stale or unmarked artifact pages (--all: every one), then print name, columns, file
         --no-pull             build without reading the Google decision store first
+        --assets NAME         the asset files page NAME still has to upload (absolute paths on stdout, the count on stderr)
         --list                the page table: name, columns, published at
         --mark-published NAME after publishing NAME's file to its url; releases this session's publish lock on NAME
         --force-lock          build even while another session holds the publish lock (its build is abandoned)
@@ -422,6 +441,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
     ap.add_argument("--mark-published", metavar="NAME", help="record the last build of NAME as published")
     ap.add_argument("--no-pull", action="store_true", help="build without first pulling the decision store into the local logs")
     ap.add_argument("--force-lock", action="store_true", help="build even while another session holds the publish lock")
+    ap.add_argument("--assets", metavar="NAME", help="print the picture files page NAME has not uploaded yet")
     ap.add_argument("--list", action="store_true", help="print the page table from artifacts.json")
     ap.add_argument("--hook", metavar="EVENT", help="Claude Code hook mode (SessionStart, UserPromptSubmit, Stop)")
     a = ap.parse_args(argv)
@@ -453,6 +473,19 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
             raise SystemExit(f"not marked: {e}")
         print(f"{name} marked published ({pub['profile']} profile, built {pub['built']})"
               + ("; publish lock released" if release_lock(work, name) else ""))
+        return 0
+    if a.assets:
+        entry = next((e for e in load_entries(registry) if e["name"] == a.assets), None)
+        if entry is None:
+            raise SystemExit(f"no page named {a.assets} in artifacts.json")
+        if not adapter.assets:
+            print(f"{a.assets}: this repo's pages carry no pictures (the adapter has no assets list)", file=sys.stderr)
+            return 0
+        from review_core import assets
+        gone = missing_assets(entry, adapter)
+        for n in gone:
+            print(assets.asset_dir(adapter.root) / n)
+        print(f"{len(gone)} to upload for {_url(entry)}", file=sys.stderr)
         return 0
     if a.list:
         print("\t".join(["name", *[h for h, _ in columns], "published at"]))

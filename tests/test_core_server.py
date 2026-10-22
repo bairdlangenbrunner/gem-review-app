@@ -71,6 +71,31 @@ def test_page_and_files(running):
     assert who == {"reviewer": "BL", "caps": {"decide": True}, "store": False}
 
 
+def get_raw(url):
+    with urllib.request.urlopen(url) as r:
+        return r.status, r.headers, r.read()
+
+
+def test_asset_route_serves_only_made_pictures(running):
+    base, app, _ = running
+    folder = app.root / "work" / "review_assets"
+    folder.mkdir(parents=True)
+    jpg, png, absent = "a" * 64 + ".jpg", "b" * 64 + ".png", "c" * 64 + ".jpg"
+    (folder / jpg).write_bytes(b"\xff\xd8jpeg")
+    (folder / png).write_bytes(b"\x89PNGbytes")
+    (folder / "notes.jpg").write_bytes(b"x")           # in the folder, but not a name the assets module makes
+    (app.root / "work" / "secret.txt").write_text("no")
+    status, headers, body = get_raw(base + "/asset/" + jpg)
+    assert (status, headers["Content-Type"], body) == (200, "image/jpeg", b"\xff\xd8jpeg")
+    assert "immutable" in headers["Cache-Control"]
+    status, headers, body = get_raw(base + "/asset/" + png)
+    assert (status, headers["Content-Type"], body) == (200, "image/png", b"\x89PNGbytes")
+    for bad in (absent, "notes.jpg", "../secret.txt", "..%2Fsecret.txt", jpg + ".txt", jpg.upper(), ""):
+        with pytest.raises(urllib.error.HTTPError) as e:
+            get(base + "/asset/" + bad)
+        assert e.value.code == 404
+
+
 def test_write_round_trip(running):
     base, app, staging = running
     key = "batches/a/staging::W1:size"

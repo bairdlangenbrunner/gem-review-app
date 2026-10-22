@@ -476,8 +476,22 @@
         ? '<div class="row1">' + chip("matches existing " + (l.matched_project_id || ""), "newrow") + ' <span class="faint">candidate data for a pipeline already tracked</span></div>' : "";
       return h + '<table class="rowdata">' + tr.join("") + "</table>";
     }
+    // how the route or value was made: the paragraph, the facts, the map pictures and the control points (plan, "Geo")
+    function provenanceHtml(pv) {
+      var G = window.ReviewGeo, h = "";
+      if (pv.text) h += '<p class="rprov">' + esc(pv.text) + "</p>";
+      var facts = (pv.facts || []).filter(function (f) { return f && f.length >= 2; });
+      if (facts.length) h += '<table class="rfacts"><tbody>' + facts.map(function (f) {
+        var v = f[2] && /^https?:\/\//i.test(f[2]) ? '<a href="' + esc(f[2]) + '" target="_blank" rel="noopener">' + esc(f[1]) + "</a>" : esc(f[1]);
+        return "<tr><th>" + esc(f[0]) + "</th><td>" + v + "</td></tr>";
+      }).join("") + "</tbody></table>";
+      if (G && G.imageBlock) h += G.imageBlock(pv.images || []);
+      if (G && G.controlPointTable) h += G.controlPointTable(pv.control_points || []);
+      return h;
+    }
     function detailsHtml(l) {
       var d = [];
+      if (l.provenance) d.push(provenanceHtml(l.provenance));
       if (l.notes) d.push('<div class="dtxt"><span class="k">researcher notes:</span> ' + esc(l.notes) + "</div>");
       (l.verifications || []).forEach(function (v) {
         if (v.note) d.push('<div class="dtxt"><span class="k">' + esc(v.url) + ":</span> " + esc(v.note) + "</div>");
@@ -501,7 +515,7 @@
       if (l.also_in && l.also_in.length) misc.push("also in " + l.also_in.map(origDir).join(", "));
       if (l.kind === "oo") misc.push("owners tab row " + l.sheet_row + (l.tracker_sheet_row ? ", tracker row " + l.tracker_sheet_row : ""));
       d.push('<div class="dtxt"><span class="k">record:</span> ' + esc(misc.join(" · ")) + "</div>");
-      return '<details data-more><summary>notes &amp; record</summary>' + d.join("") + "</details>";
+      return '<details data-more><summary>' + (l.provenance ? "how this route was made, notes &amp; record" : "notes &amp; record") + '</summary>' + d.join("") + "</details>";
     }
     // "major · fill", "major · status, change", "minor · refs only", "minor · re-verified"
     function sevChip(l) {

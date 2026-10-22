@@ -231,6 +231,83 @@
     if (w) { e.preventDefault(); setPairMode(w, m.getAttribute("data-rpair-mode")); }
   });
 
+  // ---- provenance pictures: the map and overlay a route was traced from, and the control points that placed the map ----
+  function safeUrl(u) { return /^https?:\/\//i.test(String(u || "")) ? String(u) : ""; }
+  // where an image loads from: the loopback server's /asset/ folder, or on the artifact page the url the upload gave it ("" when it has none)
+  function imageSrc(img) {
+    img = img || {};
+    if (window.REVIEW_STATIC) return img.url || "";
+    return img.asset ? "/asset/" + img.asset : "";
+  }
+  function imageBlock(images) {
+    var all = (images || []).filter(function (i) { return i; });
+    if (!all.length) return "";
+    var order = {map: 0, overlay: 1};
+    var list = all.map(function (img, n) { return {img: img, n: n, r: order[img.role] == null ? 2 : order[img.role]}; })
+      .sort(function (a, b) { return a.r - b.r || a.n - b.n; });
+    return '<div class="rimgs">' + list.map(function (x) {
+      var img = x.img, src = imageSrc(img), cap = esc(img.caption || img.role || "");
+      var link = safeUrl(img.source_url) ? ' <a href="' + esc(safeUrl(img.source_url)) + '" target="_blank" rel="noopener">source</a>' : "";
+      var dims = (img.width ? ' width="' + esc(Math.round(img.width)) + '"' : "") + (img.height ? ' height="' + esc(Math.round(img.height)) + '"' : "");
+      var pic = src ? '<img loading="lazy" src="' + esc(src) + '" alt="' + cap + '"' + dims + ' data-rzoom="1" title="click for full size">'
+        : '<div class="rimg-none">image not uploaded</div>';
+      return '<figure class="rimg">' + pic + "<figcaption>" + cap + link + "</figcaption></figure>";
+    }).join("") + "</div>";
+  }
+  function fixed(v, n) { return typeof v === "number" && isFinite(v) ? v.toFixed(n) : ""; }
+  function controlPointTable(points) {
+    var pts = (points || []).filter(function (p) { return p; });
+    if (!pts.length) return "";
+    var rows = pts.map(function (p) {
+      var px = p.px || [], ref = String(p.ref == null ? "" : p.ref);
+      return "<tr><td>" + esc(p.name) + "</td><td>" + (px.length >= 2 ? Math.round(px[0]) + ", " + Math.round(px[1]) : "") + "</td><td>" + fixed(p.lon, 5) +
+        "</td><td>" + fixed(p.lat, 5) + "</td><td>" + fixed(p.residual_km, 2) + "</td><td>" +
+        (safeUrl(ref) ? '<a href="' + esc(safeUrl(ref)) + '" target="_blank" rel="noopener">link</a>' : esc(ref)) + "</td></tr>";
+    });
+    return '<table class="rcpts"><caption>Control points used to place the map</caption><thead><tr><th>point</th><th>pixel</th><th>lon</th><th>lat</th>' +
+      "<th>error km</th><th>source</th></tr></thead><tbody>" + rows.join("") + "</tbody></table>";
+  }
+  // one page-wide lightbox, made the first time a picture is opened; Esc is taken in the capture phase while it is open so the page's own keys stay quiet
+  var BOX = null, BOX_IMG = null;
+  function lightbox() {
+    if (!BOX) {
+      BOX = document.createElement("div");
+      BOX.className = "rlightbox";
+      BOX.setAttribute("role", "dialog");
+      BOX.setAttribute("aria-label", "full size image, click or press Esc to close");
+      BOX.hidden = true;
+      BOX_IMG = document.createElement("img");
+      BOX_IMG.setAttribute("alt", "");
+      BOX.appendChild(BOX_IMG);
+      document.body.appendChild(BOX);
+    }
+    return BOX;
+  }
+  function openImage(src, alt) {
+    var box = lightbox();
+    BOX_IMG.setAttribute("src", src);
+    BOX_IMG.setAttribute("alt", alt || "");
+    box.hidden = false;
+  }
+  function closeImage() {
+    if (!BOX) return;
+    BOX.hidden = true;
+    BOX_IMG.removeAttribute("src");
+  }
+  function imageOpen() { return !!BOX && !BOX.hidden; }
+  document.addEventListener("keydown", function (e) {
+    if (!imageOpen() || e.key !== "Escape") return;
+    e.stopPropagation();
+    e.preventDefault();
+    closeImage();
+  }, true);
+  document.addEventListener("click", function (e) {
+    if (imageOpen()) { e.preventDefault(); closeImage(); return; }
+    var im = e.target && e.target.closest ? e.target.closest("img[data-rzoom]") : null;
+    if (im) { e.preventDefault(); openImage(im.getAttribute("src"), im.getAttribute("alt")); }
+  });
+
   window.ReviewGeo = {BASEMAPS: BASEMAPS, LEAFLET_JS: LEAFLET_JS, tileXY: tileXY, basemap: basemap, setBasemap: setBasemap,
-                      loadLeaflet: loadLeaflet, mapSlot: mapSlot, pairSlot: pairSlot, syncMaps: syncMaps, lines: lines, scan: scan, _reg: REG};
+                      loadLeaflet: loadLeaflet, mapSlot: mapSlot, pairSlot: pairSlot, syncMaps: syncMaps, lines: lines, scan: scan, imageSrc: imageSrc, imageBlock: imageBlock, controlPointTable: controlPointTable,
+                      _reg: REG};
 })();

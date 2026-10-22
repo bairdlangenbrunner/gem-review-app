@@ -4,6 +4,7 @@ The shared loopback review server. Standard library only; it binds a loopback ad
     GET  /                  the page (review_core/web/index.html, titled for the tracker)
     GET  /core/<file>       a file from review_core/web
     GET  /tracker/<file>    a file from the tracker's web folder (a missing ext.css or ext.js is served empty)
+    GET  /asset/<name>      a picture from <root>/work/review_assets (names the assets module made: <sha256>.jpg or .png)
     GET  /api/data          the dataset with every staging dir's decisions laid over it (gzip when asked)
     GET  /api/whoami        {"reviewer", "caps", "store"}
     GET  /api/decisions?dir=<label>   that staging dir's latest record per key
@@ -30,6 +31,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from review_core.assets import ASSET_RE, asset_dir
 from review_core.store import Invalid
 
 CORE_WEB = Path(__file__).resolve().parent / "web"
@@ -182,7 +184,8 @@ def make_handler(app, server_version="gem_review_app/1"):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            if not extra or "Cache-Control" not in extra:
+                self.send_header("Cache-Control", "no-store")
             for k, v in (extra or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -215,6 +218,17 @@ def make_handler(app, server_version="gem_review_app/1"):
             self._send(f.read_bytes(), ctype)
 
         serve_file = _file
+
+        def _asset(self, name):
+            """Serve a content-addressed picture: only a name the assets module makes, only from its folder."""
+            if not ASSET_RE.match(name):
+                return self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            base = asset_dir(app.root).resolve()
+            f = (base / name).resolve()
+            if base not in f.parents or not f.is_file():
+                return self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+            self._send(f.read_bytes(), "image/png" if name.endswith(".png") else "image/jpeg",
+                       extra={"Cache-Control": "public, max-age=31536000, immutable"})
 
         def body(self):
             """The request body as JSON (ValueError when it is not JSON)."""
@@ -271,6 +285,8 @@ def make_handler(app, server_version="gem_review_app/1"):
                 return self._send(page_html(app.config).encode("utf-8"), "text/html; charset=utf-8")
             if path.startswith("/core/"):
                 return self._file(CORE_WEB, path[len("/core/"):])
+            if path.startswith("/asset/"):
+                return self._asset(path[len("/asset/"):])
             if path.startswith("/tracker/"):
                 rel = path[len("/tracker/"):]
                 return self._file(app.config.web_dir, rel, optional=rel in OPTIONAL_EXT)

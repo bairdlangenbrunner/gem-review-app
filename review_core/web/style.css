@@ -571,3 +571,28 @@ button.copybtn:hover, button.copybtn:focus-visible { opacity: 1; color: var(--ac
 .rpair[data-mode="split"] .rpair-over, .rpair[data-mode="overlay"] .rpair-split { display: none; }
 @media (max-width: 720px) { .rpair-split { grid-template-columns: 1fr; } }
 
+
+/* how a route or value was made: the paragraph, the facts, the map pictures and the control points (review_core/web/geo.js imageBlock, controlPointTable) */
+.rprov { margin: 8px 0 4px 14px; overflow-wrap: anywhere; }
+.rfacts { border-collapse: collapse; margin: 4px 0 4px 14px; font-size: 14px; max-width: calc(100% - 14px); }
+.rfacts th, .rfacts td { text-align: left; vertical-align: top; padding: 2px 12px 2px 0; overflow-wrap: anywhere; }
+.rfacts th { color: var(--muted); font-weight: 400; white-space: nowrap; }
+.rimgs { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 4px 14px; }
+.rimg { margin: 0; max-width: 320px; }
+.rimg img { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--panel); cursor: zoom-in; }
+.rimg figcaption { font-size: 13px; color: var(--muted); margin-top: 2px; overflow-wrap: anywhere; }
+.rimg-none { padding: 18px 10px; border: 1px dashed var(--line); border-radius: 4px; color: var(--muted); font-size: 13px; text-align: center; }
+.rlightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; background: rgba(0, 0, 0, .82); cursor: zoom-out; }
+.rlightbox[hidden] { display: none; }
+.rlightbox img { max-width: 95vw; max-height: 90vh; background: #fff; border-radius: 4px; }
+.rcpts { border-collapse: collapse; margin: 8px 0 4px 14px; font-size: 13px; max-width: calc(100% - 14px); }
+.rcpts caption { text-align: left; color: var(--muted); padding-bottom: 2px; }
+.rcpts th, .rcpts td { border-bottom: 1px solid var(--line); padding: 2px 10px 2px 0; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.rcpts th { color: var(--muted); font-weight: 400; }
+.rcpts td:nth-child(n+2):nth-child(-n+5), .rcpts th:nth-child(n+2):nth-child(-n+5) { white-space: nowrap; overflow-wrap: normal; }
+.rcpts td:first-child { min-width: 12em; }
+@media (max-width: 720px) {
+  .rimgs, .rprov, .rfacts, .rcpts { margin-left: 0; max-width: 100%; }
+  .rimg { max-width: 100%; }
+  .rcpts { display: block; overflow-x: auto; }
+}
