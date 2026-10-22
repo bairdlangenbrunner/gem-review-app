@@ -562,4 +562,12 @@ button.copybtn:hover, button.copybtn:focus-visible { opacity: 1; color: var(--ac
 .rmap { height: 300px; border: 1px solid var(--line); background: var(--bg); position: relative; z-index: 0; }
 .rmap .rmap-msg { padding: 120px 8px; text-align: center; font-size: 13px; color: var(--muted); }
 .rmap .leaflet-control-attribution { font-size: 10px; }
+.rpair { margin-top: 8px; max-width: 1100px; }
+.rpair-bar { display: flex; gap: 2px; font-size: 12px; }
+.rpair-bar button { font-size: 12px; min-height: 0; padding: 2px 8px; }
+.rpair-bar button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.rpair-split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.rpair .rmap-wrap { max-width: none; }
+.rpair[data-mode="split"] .rpair-over, .rpair[data-mode="overlay"] .rpair-split { display: none; }
+@media (max-width: 720px) { .rpair-split { grid-template-columns: 1fr; } }
 

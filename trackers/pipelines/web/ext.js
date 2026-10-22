@@ -444,7 +444,9 @@
     function routeBody(l) {
       var dl = geoDownload(l);
       var was = l.current_route_accuracy, sug = l.suggested_route_accuracy;
+      var g = l.geo || {}, pair = !!(g.candidate && g.current && !routeAdded(l));
       var rows = [
+        ["current route length", pair && g.current_length_km != null ? g.current_length_km + " km" : ""],
         ["candidate length", l.length_km == null ? "" : l.length_km + " km"],
         ["sheet length", l.sheet_length_km == null ? "" : l.sheet_length_km + " km"],
         ["ratio", l.length_ratio == null ? "" : String(l.length_ratio)]
@@ -453,9 +455,11 @@
         (blankv(sug) ? "" : '<span class="arrow">→</span><span class="newv">' + esc(sug) + "</span>" + copyBtn(sug)) + "</div>");
       rows.push('<div class="k">QC</div><div class="v">' + (l.qc_passed ? chip("✓ passed", "ok") : chip("✗ did not pass", "bad")) + "</div>");
       rows.push('<div class="k">geometry</div><div class="v">' + (dl || '<span class="muted">none</span>') + "</div>");
-      var map = l.geo && l.geo.candidate && window.ReviewGeo ? window.ReviewGeo.mapSlot(l.key, l.geo, {show: "candidate", label: "proposed"}) : "";
+      // a route GEM already maps: the one it has and the candidate side by side (plan step 3)
+      var map = !g.candidate || !window.ReviewGeo ? "" : pair ? window.ReviewGeo.pairSlot(l.key, g, {currentLabel: "now (routes repo)"})
+        : window.ReviewGeo.mapSlot(l.key, g, {show: "candidate", label: "proposed"});
       var warn = l.route_disagree ? '<div class="dtxt warn-txt"><span class="k">route and sheet disagree:</span> ' + esc(l.route_disagree) + "</div>" : "";
-      var foot = routeAdded(l) ? addedText(l) + "; the sheet's route columns say mapped." : "accepting records approval for the §8 apply; it writes no cell.";
+      var foot = routeAdded(l) ? addedText(l) + "; the sheet's route columns say mapped." : pair ? "accepting records approval for the §8 apply with --replace; it writes no cell." : "accepting records approval for the §8 apply; it writes no cell.";
       return map + warn + '<div class="chg">' + rows.join("") + '</div><div class="faint" style="margin-top:4px">' + esc(foot) + "</div>";
     }
     function newRowBody(l) {

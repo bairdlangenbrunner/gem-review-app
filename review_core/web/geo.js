@@ -196,11 +196,41 @@
     try { o.map.setView(r.map.getCenter(), r.map.getZoom(), {animate: false}); } finally { SYNCING = false; }
   }
 
+  // ---- a route and its replacement: two synchronized panes, or one map with both (step 3) ----
+  var MODES = {};        // pair id -> "split" | "overlay", kept across re-renders
+  function pairSlot(id, geo, opts) {
+    var o = opts || {}, mode = MODES[id] || "split", a = id + "#now", b = id + "#new";
+    syncMaps(a, b);
+    var btn = function (m, lab) {
+      return '<button type="button" class="ghost" data-rpair-mode="' + m + '" aria-pressed="' + (m === mode ? "true" : "false") + '">' + lab + "</button>";
+    };
+    return '<div class="rpair" data-rpair="' + esc(id) + '" data-mode="' + mode + '"><div class="rpair-bar">' +
+      btn("split", "side by side") + btn("overlay", "overlay") + "</div>" +
+      '<div class="rpair-split">' + mapSlot(a, geo, {show: "current", label: o.currentLabel || "now"}) +
+      mapSlot(b, geo, {show: "candidate", label: o.candidateLabel || "proposed"}) + "</div>" +
+      '<div class="rpair-over">' + mapSlot(id + "#both", geo, {show: "both", label: o.bothLabel || "now (gray, dashed) and proposed"}) + "</div></div>";
+  }
+  function setPairMode(wrap, mode) {
+    var id = wrap.getAttribute("data-rpair");
+    MODES[id] = mode;
+    wrap.setAttribute("data-mode", mode);
+    var bs = wrap.querySelectorAll("[data-rpair-mode]");
+    for (var i = 0; i < bs.length; i++) bs[i].setAttribute("aria-pressed", bs[i].getAttribute("data-rpair-mode") === mode ? "true" : "false");
+    // a map drawn while its pane was hidden has the wrong size until told
+    [id + "#now", id + "#new", id + "#both"].forEach(function (k) {
+      var r = REG[k];
+      if (r && r.map) { try { r.map.invalidateSize(false); } catch (e) { /* its container is gone */ } }
+    });
+  }
+
   document.addEventListener("click", function (e) {
     var b = e.target && e.target.closest ? e.target.closest("[data-basemap]") : null;
-    if (b) { e.preventDefault(); setBasemap(b.getAttribute("data-basemap")); }
+    if (b) { e.preventDefault(); setBasemap(b.getAttribute("data-basemap")); return; }
+    var m = e.target && e.target.closest ? e.target.closest("[data-rpair-mode]") : null;
+    var w = m && m.closest(".rpair[data-rpair]");
+    if (w) { e.preventDefault(); setPairMode(w, m.getAttribute("data-rpair-mode")); }
   });
 
   window.ReviewGeo = {BASEMAPS: BASEMAPS, LEAFLET_JS: LEAFLET_JS, tileXY: tileXY, basemap: basemap, setBasemap: setBasemap,
-                      loadLeaflet: loadLeaflet, mapSlot: mapSlot, syncMaps: syncMaps, lines: lines, scan: scan, _reg: REG};
+                      loadLeaflet: loadLeaflet, mapSlot: mapSlot, pairSlot: pairSlot, syncMaps: syncMaps, lines: lines, scan: scan, _reg: REG};
 })();

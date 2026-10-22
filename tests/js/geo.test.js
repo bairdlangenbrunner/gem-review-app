@@ -51,11 +51,11 @@ function leaflet(calls) {
 // a fresh context holding geo.js; opts.storage replaces the in-memory localStorage, opts.L is the Leaflet stub, opts.els the slots scan() finds
 function load(opts) {
   opts = opts || {};
-  var buttons = [button("map"), button("satellite")];
+  var buttons = [button("map"), button("satellite")], clicks = [];
   var ctx = {
     document: {
       body: null, documentElement: stub.element("html"), head: stub.element("head"),
-      addEventListener: noop, createElement: stub.element,
+      addEventListener: function (t, fn) { if (t === "click") clicks.push(fn); }, createElement: stub.element,
       querySelectorAll: function (sel) { return /data-basemap/.test(sel) ? buttons : /rmap/.test(sel) ? (opts.els || []).filter(function (e) { return !e.hasAttribute("data-drawn"); }) : []; }
     },
     setTimeout: setTimeout, Promise: Promise, console: {error: noop, warn: noop, log: noop, info: noop},
@@ -65,7 +65,7 @@ function load(opts) {
   if (opts.L) ctx.L = opts.L;
   vm.createContext(ctx);
   vm.runInContext(GEO_JS, ctx, {filename: "geo.js"});
-  return {ctx: ctx, geo: ctx.ReviewGeo, buttons: buttons};
+  return {ctx: ctx, geo: ctx.ReviewGeo, buttons: buttons, clicks: clicks};
 }
 function pressed(P) { return P.buttons.map(function (b) { return b.getAttribute("aria-pressed"); }); }
 function later() { return new Promise(function (ok) { setTimeout(ok, 20); }); }
@@ -206,6 +206,45 @@ test("a drawn slot with both routes draws the current one dashed and a point bbo
     assert.equal(calls.geoJSON[1][1].style.dashArray, "6 5");
     assert.deepEqual(stub.plain(calls.setView[0].slice(0, 2)), [[6, 5], 12]);
   });
+});
+
+test("pairSlot: a route and its replacement side by side, the overlay hidden, the two panes synced", function () {
+  var P = load(), geo = {candidate: null, current: null};
+  var html = P.geo.pairSlot("W1:route", geo, {currentLabel: "now (routes repo)"});
+  assert.match(html, /<div class="rpair" data-rpair="W1:route" data-mode="split">/);
+  assert.match(html, /data-rpair-mode="split" aria-pressed="true">side by side</);
+  assert.match(html, /data-rpair-mode="overlay" aria-pressed="false">overlay</);
+  assert.match(html, /<span class="rmap-label">now \(routes repo\)<\/span>/);
+  assert.match(html, /<span class="rmap-label">proposed<\/span>/);
+  assert.ok(html.indexOf('data-rmap="W1:route#now"') < html.indexOf('data-rmap="W1:route#new"'), "now on the left");
+  assert.match(html, /<div class="rpair-over">.*data-rmap="W1:route#both"/);
+  var reg = P.geo._reg;
+  assert.equal(reg["W1:route#now"].opts.show, "current");
+  assert.equal(reg["W1:route#new"].opts.show, "candidate");
+  assert.equal(reg["W1:route#both"].opts.show, "both");
+});
+
+test("the overlay button switches the pair to one map, resizes the drawn ones, and the choice survives a re-render", function () {
+  var P = load(), geo = {candidate: null, current: null};
+  P.geo.pairSlot("p", geo);
+  var sized = [];
+  P.geo._reg["p#now"].map = {invalidateSize: function () { sized.push("now"); }};
+  var wrap = stub.element("div"), split = stub.element("button"), over = stub.element("button");
+  wrap.setAttribute("data-rpair", "p");
+  wrap.setAttribute("data-mode", "split");
+  wrap.querySelectorAll = function () { return [split, over]; };
+  split.setAttribute("data-rpair-mode", "split");
+  over.setAttribute("data-rpair-mode", "overlay");
+  over.closest = function (sel) { return /data-rpair-mode/.test(sel) ? over : /rpair/.test(sel) ? wrap : null; };
+  var prevented = 0;
+  P.clicks.forEach(function (fn) { fn({target: over, preventDefault: function () { prevented++; }}); });
+  assert.equal(prevented, 1);
+  assert.equal(wrap.getAttribute("data-mode"), "overlay");
+  assert.equal(split.getAttribute("aria-pressed"), "false");
+  assert.equal(over.getAttribute("aria-pressed"), "true");
+  assert.deepEqual(sized, ["now"]);
+  assert.match(P.geo.pairSlot("p", geo), /data-mode="overlay"/);
+  assert.match(load().geo.pairSlot("p", geo), /data-mode="split"/, "a fresh page starts side by side");
 });
 
 test("a slot with no registered geometry says so, and a failed Leaflet load marks it failed", function () {
