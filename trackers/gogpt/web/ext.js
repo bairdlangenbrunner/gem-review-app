@@ -268,17 +268,13 @@
       return '<tr class="note"><td></td><td colspan="3"><div class="faint">the same edit lands on the other unit rows of this plant: ' + esc(txt) + "</div></td></tr>";
     }
     // ---- location block: two satellite patches (Esri World Imagery, zoom 16, a 2 by 2 grid of tiles) with a crosshair ----
-    var ESRI_TILE = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}";
+    var ESRI_TILE = window.ReviewGeo.BASEMAPS.satellite.url;     // the shared basemaps and tile math (review_core/web/geo.js)
     var ESRI_ATTRIBUTION = "Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community";
     var LOC_ZOOM = 16;
     var METHOD_WORDS = {address: "placed from an address", site_reference: "placed from a site reference in a document",
                         dataset: "taken from a dataset point", map: "georeferenced from a map in a document",
                         imagery: "placed from the satellite picture of the plant"};
-    // Web Mercator tile coordinates of a point, the same math as scripts/geo.py tile_xy
-    function tileXY(lat, lon, z) {
-      var n = Math.pow(2, z), r = Math.max(-85.05112878, Math.min(85.05112878, lat)) * Math.PI / 180;
-      return {x: (lon + 180) / 360 * n, y: (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n};
-    }
+    var tileXY = window.ReviewGeo.tileXY;
     function locPoint(pt) { return pt && typeof pt.lat === "number" && typeof pt.lon === "number"; }
     function locPane(title, pt) {
       var h = '<div class="pane"><div class="ttl">' + esc(title) + "</div>";
