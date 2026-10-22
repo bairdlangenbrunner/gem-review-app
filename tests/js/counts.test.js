@@ -218,3 +218,11 @@ test("the bulk buttons are enabled only when a counted line is left", function (
     assert.match(P.$("card").innerHTML, /class="bulk b-accept" data-bulk="bulk-minor"/, "accept all minor changes is drawn off");
   });
 });
+
+test("pipelines: a route already in the routes repo, or written by the §8 apply, has landed", function () {
+  var landed = new Function(pipelinesRule() + "\nreturn landed;")();
+  assert.equal(landed({kind: "route", applied: {by: "routes_repo", at: "2026-10-21"}}), true);
+  assert.equal(landed({kind: "route", applied: {by: "apply_route_candidates", at: "2026-10-22"}}), true);
+  assert.equal(landed({kind: "route", applied: {by: "backend sync"}}), false);
+  assert.equal(landed({kind: "route", applied: null}), false);
+});

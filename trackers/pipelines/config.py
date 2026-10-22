@@ -7,7 +7,7 @@ Item kinds: a concern (a validity question on a contested value) is confirmed, d
 
 A person's line call can answer a concern in the same write. Accepting a line whose proposed value equals the concern's contested value dismisses the concern. Taking the concern's candidate value instead of the proposal (a `rival` request, stored as a suggest) confirms it.
 
-Machine reviewers: "backend sync" (a refresh found the line already in the sheet) and "push" (push.py wrote the cell). Their records never count as a person's call; the line shows them as `applied`.
+Machine reviewers: "backend sync" (a refresh found the line already in the sheet), "push" (push.py wrote the cell) and "apply_route_candidates" (the §8 apply wrote a route line's sheet columns). Their records never count as a person's call; the line shows them as `applied`.
 
 What stays repo code in pipelines-researcher: the refresh (scripts/refresh_csvs.sh plus a dataset rebuild), the push plan and apply (push.py) and the `basis` stamp (review_data.basis). The routes below call the refresh and push through methods on the repo's App subclass, and answer 409 when the subclass does not have them.
 
@@ -29,7 +29,7 @@ ITEM_KINDS = ("concern", "routeqc", "route_suggestion", "monitor", "flag", "esca
 CONCERN_CALLS = ("confirmed", "dismissed", "needs_research")
 OTHER_CALLS = ("noted", "todo", "dismissed")
 SYNC_REVIEWER = "backend sync"
-MACHINE_REVIEWERS = {"backend sync", "push"}
+MACHINE_REVIEWERS = {"backend sync", "push", "apply_route_candidates"}
 INFO_KINDS = {"confirmed"}
 
 
@@ -225,7 +225,8 @@ def overlay_extras(api, data, speak):
         for o in p.get("lines", []):
             rec, mrec = speak(o.get("dir"), o["key"])
             live = rec if rec and not rec.get("undecided") else None
-            o["applied"] = {"by": mrec.get("reviewer"), "at": mrec.get("ts")} if mrec else None
+            # no machine record: a route line keeps what review_data detected (route_state.py: in the routes repo, sheet mapped)
+            o["applied"] = {"by": mrec.get("reviewer"), "at": mrec.get("ts")} if mrec else o.get("detected_applied")
             o["rival"] = (live.get("rival") or None) if live and live.get("decision") == "suggest" else None
             if o.get("covers"):
                 for c in o["covers"]:

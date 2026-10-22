@@ -149,8 +149,13 @@
     // ---- small helpers ----
     function origDir(d) { return String(d || "").split("/").pop(); }
     function sevOf(l) { return l.severity || "major"; }
-    // the sheet already holds the line: the snapshot had it (in_backend) or push.py wrote it
-    function landed(l) { return !!l.in_backend || !!(l.applied && l.applied.by === "push"); }
+    // the sheet already holds the line: the snapshot had it (in_backend), push.py wrote it, or the route is in the routes repo with the sheet columns mapped (route_state.py, or the §8 apply's own record)
+    function landed(l) { return !!l.in_backend || !!(l.applied && /^(push|routes_repo|apply_route_candidates)$/.test(l.applied.by)); }
+    function routeAdded(l) { return l.kind === "route" && !!l.applied && (l.applied.by === "routes_repo" || l.applied.by === "apply_route_candidates"); }
+    function addedText(l) {
+      var a = l.applied || {};
+      return "already added " + String(a.at || "").slice(0, 10) + (a.commit ? " (routes repo commit " + a.commit + ")" : "");
+    }
     // a status line whose folded Status [ref] record still says something else: deciding again covers it
     function gap(l) { return !!(cur(l) && l.uncovered && l.uncovered.length); }
     function dimmed(l) { return (A.grayed(l) && !gap(l)) || landed(l); }
@@ -220,6 +225,7 @@
     function appliedText(l) {
       var a = l.applied;
       if (!a) return "";
+      if (routeAdded(l)) return " · " + addedText(l);
       return a.by === "push" ? " · written to the sheet " + timeOf(a.at) : " · in backend " + timeOf(a.at);
     }
     function decisionText(l) {
@@ -232,6 +238,7 @@
       if (l.decision && l.decided_by === "backend sync") return "in backend (synced by backend sync, not reviewed)";
       if (l.decision && l.decided_by === "push") return "written to the sheet by push " + timeOf(l.decided_at) + " (the accept it wrote was undone or re-keyed since)";
       if (l.decision && l.decided_by) return "pre-filled by " + l.decided_by + " (not reviewed)";
+      if (routeAdded(l)) return addedText(l) + ": nothing to decide";
       return "";
     }
 
@@ -447,7 +454,9 @@
       rows.push('<div class="k">QC</div><div class="v">' + (l.qc_passed ? chip("✓ passed", "ok") : chip("✗ did not pass", "bad")) + "</div>");
       rows.push('<div class="k">geometry</div><div class="v">' + (dl || '<span class="muted">none</span>') + "</div>");
       var map = l.geo && l.geo.candidate && window.ReviewGeo ? window.ReviewGeo.mapSlot(l.key, l.geo, {show: "candidate", label: "proposed"}) : "";
-      return map + '<div class="chg">' + rows.join("") + '</div><div class="faint" style="margin-top:4px">accepting records approval for the §8 apply; it writes no cell.</div>';
+      var warn = l.route_disagree ? '<div class="dtxt warn-txt"><span class="k">route and sheet disagree:</span> ' + esc(l.route_disagree) + "</div>" : "";
+      var foot = routeAdded(l) ? addedText(l) + "; the sheet's route columns say mapped." : "accepting records approval for the §8 apply; it writes no cell.";
+      return map + warn + '<div class="chg">' + rows.join("") + '</div><div class="faint" style="margin-top:4px">' + esc(foot) + "</div>";
     }
     function newRowBody(l) {
       var vals = l.proposed_values || {}, refs = l.proposed_refs || {};
@@ -997,7 +1006,7 @@
         return groups;
       },
       dimmed: dimmed,
-      lineClass: function (l) { return l.kind === "new_row" ? " newcard" : ""; },
+      lineClass: function (l) { return (l.kind === "new_row" ? " newcard" : "") + (routeAdded(l) ? " added" : ""); },
 
       // ---- lines ----
       lineChips: function (l, base) {
@@ -1010,6 +1019,8 @@
         if (agree.length) chips.push(chip("concern agrees", "ok", "an open concern's candidate on " + agree.map(function (r) { return r.agrees.join(", "); }).join("; ") + " equals this proposed value; accepting it records a dismissed call on the concern"));
         if (rivals.length) chips.push(chip("rival candidate", "cont", "a validity concern proposes a different value for this cell: take it with accept candidate (c), or accept the proposal and the concern is dismissed"));
         if (l.in_backend) chips.push(chip("in backend", "", "the snapshot already holds this value and these refs"));
+        if (routeAdded(l)) chips.push(chip(("already added " + String(l.applied.at || "").slice(0, 10)).trim(), "ok", "this geometry is in the routes repo" + (l.applied.commit ? " (commit " + l.applied.commit + ")" : "") + " and the sheet's route columns say mapped: nothing to decide"));
+        if (l.route_disagree) chips.push(chip("route and sheet disagree", "warn", l.route_disagree));
         if (l.applied && l.applied.by === "push") chips.push(chip("pushed " + timeOf(l.applied.at), "ok", "push.py wrote this line to the backend sheet (cells read back after the write); the next backend refresh shows it as in backend"));
         if (l.drift && cur(l)) chips.push(chip("sheet changed since decided", "warn", "the backend cells this call was judged against have changed since (it was decided on " + (l.drift.decided_snapshot || "an earlier snapshot") + "): look again, then press the call again to confirm it against the current sheet"));
         if (l.live) chips.push(chip("sheet changed live", "warn", "the backend sheet, read just now, differs from what this change was judged against: " + l.live.map(function (c) { return c[0] + " was " + (c[1] || "blank") + ", is now " + (c[2] || "blank"); }).join("; ") + ". publish again to rebuild the proposal against the new values"));

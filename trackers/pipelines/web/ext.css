@@ -17,3 +17,6 @@ dialog[data-kind="geo"] pre { max-height: 180px; overflow: auto; font-size: 12px
 .fdrop summary:hover { border-color: #d98a00; }
 /* fuel and country sit side by side like country and state on the gogpt page: the divider goes after the pair */
 #f-fuel:has(+ #f-country:not([hidden])) { border-right: 0; padding-right: 0; }
+/* a route line already in the routes repo with the sheet mapped (route_state.py): nothing to decide, so no decision buttons */
+.line.added .controls > button, .line.added .controls > .dnote { display: none; }
+.line .warn-txt { margin-top: 6px; color: var(--warn); }
