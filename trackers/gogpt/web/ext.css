@@ -45,16 +45,26 @@ table.pair td { white-space: pre-wrap; }
 .chip.grp { border-style: dashed; cursor: help; }
 .item.watch-new_to_tracker { border-left: 4px solid var(--t-new-ink); }
 .item.watch-existing_plant { border-left: 4px solid var(--accent); }
+/* a lead: a new-row record too thin to stage, shown with the proposed additions */
+.item.lead { border-left: 4px dashed var(--t-new-ink); }
+.chip.lead { color: var(--t-new-ink); border-color: var(--t-new-ink); border-style: dashed; cursor: help; }
+/* a new row whose sources were checked and state a value */
+.chip.ready { background: var(--accept); color: #fff; border-color: transparent; font-weight: 600; cursor: help; }
+/* the links from a card to the plant's other cards (plant edits / proposed additions / watch list) */
+.card .ctx .xcards a { margin-right: 8px; }
+/* an addition or watch card: rows then items, no tabs */
+.flatcard { margin-top: 8px; }
+.flatcard .items { margin-top: 12px; }
 /* the header line: what the page covers, as plain text so it does not read as a button */
 .scope .where { color: var(--ink); }
 .scope .nplants { margin-left: 4px; }
 /* the location block: two satellite patches with a crosshair, a caption and the imagery credit */
 .loc { margin-top: 10px; }
-.loc .panes { display: flex; gap: 12px; flex-wrap: wrap; }
-.loc .pane { flex: 1 1 260px; min-width: 0; }
+.loc .panes { display: flex; gap: 12px; }
+.loc .pane { flex: 0 1 calc(25% - 9px); max-width: 25%; min-width: 0; }
 .loc .pane .ttl { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; }
 .loc .pane .nopt { font-size: 13px; color: var(--muted); border: 1px dashed var(--line); padding: 40px 8px; text-align: center; }
-.loc .tiles { position: relative; width: 100%; max-width: 512px; aspect-ratio: 1 / 1; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
+.loc .tiles { position: relative; width: 100%; aspect-ratio: 1 / 1; overflow: hidden; border: 1px solid var(--line); background: var(--bg); }
 .loc .tiles img { position: absolute; width: 50%; height: 50%; display: block; }
 .loc .cross { position: absolute; background: #e5252a; pointer-events: none; }
 .loc .cross.h { width: 24px; height: 2px; transform: translate(-50%, -1px); }
@@ -66,3 +76,31 @@ table.pair td { white-space: pre-wrap; }
 .loc .mapimg img { max-width: 240px; max-height: 180px; border: 1px solid var(--line); }
 .loc .cpts { border-collapse: collapse; font-size: 12px; margin-top: 4px; }
 .loc .cpts th, .loc .cpts td { border: 1px solid var(--line); padding: 2px 6px; text-align: left; }
+/* the database's validation report error a line or an item answers */
+.verr { margin: 4px 0 6px; padding: 6px 10px; border-left: 3px solid var(--hold); background: var(--bg); font-size: 14px; }
+.verr .verr-h { display: block; font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+/* the status menu: a group box over its statuses */
+#f-status .sgroup { margin-top: 2px; }
+#f-status .schild { padding-left: 18px; }
+/* country, state and status read as one group: only the last visible one keeps the divider and its padding */
+#f-country:has(~ #f-state:not([hidden]), ~ #f-status:not([hidden])), #f-state:has(~ #f-status:not([hidden])) { border-right: 0; padding-right: 0; }
+#f-status .none, #f-status .schild.none { color: var(--muted); opacity: .55; }
+#f-status summary .n { font-size: 12px; color: var(--muted); }
+/* a plant with no suggested changes: the one "checked" line and its unit table */
+.line .checked-say { margin: 6px 0 8px; max-width: 70em; }
+/* the table never shrinks below 46em: narrower than that, its box scrolls sideways instead of the columns crushing into each other */
+.line .units-wrap { overflow-x: auto; max-width: 100%; }
+table.pair.units { min-width: 46em; }
+table.pair.units th { font-weight: 600; font-size: 12.5px; color: var(--muted); text-align: left; }
+/* its own column widths: the shared pair table gives the fourth column 5.5em, too narrow for a date, so last updated ran into researcher; researcher needs room for a full name, or it ran into research status */
+table.pair.units th:nth-child(1) { width: 24%; } table.pair.units th:nth-child(2) { width: 14%; } table.pair.units th:nth-child(3) { width: 8em; }
+table.pair.units th:nth-child(4) { width: 7.5em; } table.pair.units th:nth-child(5) { width: 11em; } table.pair.units th:nth-child(6) { width: auto; }
+/* numbers and dates stay on one line and are clipped if the column is ever too narrow; the text columns (unit, status, researcher, research status) wrap, so nothing spills into the next cell */
+table.pair.units td:nth-child(3), table.pair.units td:nth-child(4) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* a unit not in development (operating, retired, mothballed and so on) needs no bookkeeping, so its row is grayed out */
+table.pair.units tr.other td { color: var(--muted); opacity: .6; }
+.line .units-say { margin: 2px 0 6px; font-size: 13px; }
+/* the queue tabs above the plant list: suggestions | to check */
+.qtabs { margin: 0; padding: 6px 10px 0; flex: 0 0 auto; }
+.qtabs button { font-size: 14px; }
+.qtabs button .n { color: var(--muted); font-weight: 400; }

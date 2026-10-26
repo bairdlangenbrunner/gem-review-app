@@ -52,6 +52,7 @@
     stay: {},                // line keys decided this session: kept in view even if the filter would drop them
     saving: {},              // line / item keys with a save in flight
     tab: "major",            // the card's tab: "major" | "minor" | "items" | "all"
+    moreTabs: false,         // T.collapseTabs: the minor, items and everything tabs are open (they start folded behind a + next to major)
     panel: null,             // a tracker panel drawn in the card instead of a card (T.cardPanel)
     igOpen: {},              // item group id -> item details open state (survives a re-render; reset per card)
     notes: {}                // line key -> note typed in the line's note box, not saved yet (goes with the next call)
@@ -92,8 +93,10 @@
     Object.keys(x).forEach(function (k) { d[k] = x[k]; });
     return d;
   }
-  // items sit beside the edits when their kind is picked, or when the tracker says so (T.itemsInView)
-  function itemsInView(fs) { return !!(isItemKind(fs.kind) || (T.itemsInView && T.itemsInView(fs))); }
+  // items sit beside the edits when their kind is picked, or when the tracker says so (T.itemsInView,
+  // which also sees the item and its card when the question is about one item: GOGPT keeps the
+  // items of an addition or watch card in view whatever the filters say)
+  function itemsInView(fs, o, p) { return !!(isItemKind(fs.kind) || (T.itemsInView && T.itemsInView(fs, o, p))); }
   // the cards: the dataset's generic list, else the tracker's own key
   function cards() { return D ? (D.cards || D[T.cards_key || TB.cards_key] || []) : []; }
   // the tab a card opens on: its major changes, or the minor ones when it has no major change
@@ -101,6 +104,12 @@
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
       return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
+    });
+  }
+  // escaped text with each http(s) link turned into a clickable one (notes name their sources by link)
+  function linkText(s) {
+    return esc(s).replace(/https?:\/\/[^\s<]+[^\s<.,;:)'"]/g, function (u) {
+      return '<a href="' + u + '" target="_blank" rel="noopener">' + u + "</a>";
     });
   }
   function isItemKind(k) { return ITEM_KINDS.indexOf(k) >= 0; }
@@ -145,23 +154,24 @@
   }
 
   // ---- theme ----
-  // theme = a palette (dropdown; "" = the default look) x a mode (light / dark button; unset = follow the system).
+  // theme = a palette (the "theme" menu in the header, drawn like the filter menus; "" = the default look) x a mode (light / dark button; unset = follow the system).
   function initTheme() {
     var root = document.documentElement, pick = $("theme-pick"), mq = matchMedia("(prefers-color-scheme: dark)");
+    var opts = Array.prototype.slice.call(pick.querySelectorAll("[data-pal]"));
     var pal = "", mode = "";
     function store(k, v) { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch (e) { /* ignore */ } }
     function eff() { return mode || (mq.matches ? "dark" : "light"); }
     function apply() {
       if (!pal && !mode) root.removeAttribute("data-theme");
       else root.setAttribute("data-theme", pal ? pal + "-" + eff() : mode);
-      pick.value = pal;
+      opts.forEach(function (b) { b.setAttribute("aria-checked", b.dataset.pal === pal); });
     }
     try {
       pal = localStorage.getItem("review-palette") || "";
       mode = localStorage.getItem("review-mode") || "";
     } catch (e) { /* storage blocked: follow the system theme */ }
     apply();
-    pick.onchange = function () { pal = this.value; store("review-palette", pal); apply(); };
+    opts.forEach(function (b) { b.onclick = function () { pal = b.dataset.pal; store("review-palette", pal); apply(); pick.open = false; }; });
     $("theme").onclick = function () { mode = eff() === "dark" ? "light" : "dark"; store("review-mode", mode); apply(); };
     if (mq.addEventListener) mq.addEventListener("change", function () { if (!mode) apply(); });
   }
@@ -199,14 +209,14 @@
     if (skip !== "kind") {
       if (fs.kind) { if (o.kind !== fs.kind) return false; }
       // a facet that puts items in view (T.itemFacets) counts them too
-      else if (item && !itemsInView(fs) && ITEM_FACETS.indexOf(skip) < 0) return false;
+      else if (item && !itemsInView(fs, o, p) && ITEM_FACETS.indexOf(skip) < 0) return false;
     }
     if (skip !== "decision" && fs.decision && dstate(o) !== fs.decision && !(!item && S.stay[o.key])) return false;
     // a line the tracker does not count is not waiting on a call: the undecided view leaves it out (any other decision view lists it)
     if (skip !== "decision" && fs.decision === "undecided" && !item && !counted(o) && !S.stay[o.key]) return false;
     if (skip !== "tier" && fs.tier && (item || tierOf(o) !== fs.tier)) return false;
     if (fs.dir && o.dir !== fs.dir) return false;
-    if (fs.column && (item || o.column !== fs.column)) return false;
+    if (fs.column && (item || colKey(o.column) !== fs.column)) return false;
     if (fs.by && (o.reviewed ? o.decided_by : "") !== fs.by) return false;
     if (T.match && !T.match(o, p, fs, skip)) return false;
     if (q && p._hay.indexOf(q) < 0) return false;
@@ -217,7 +227,7 @@
     p.lines.forEach(function (l) {
       if (!match(l, p, FS, null, q)) return;
       n++;
-      if (isOpen(l)) { todo++; tsev[sevOf(l)]++; }   // shown but not counted (T.counted)
+      if (isOpen(l)) { todo++; if (sevOf(l) in tsev) tsev[sevOf(l)]++; }   // shown but not counted (T.counted); a severity outside major / minor (GOGPT's check lines) is in the total only
     });
     p.items.forEach(function (it) { if (match(it, p, FS, null, q)) ni++; });
     p._n = n; p._todo = todo; p._ni = ni; p._tsev = tsev;
@@ -236,7 +246,10 @@
     });
     S.countText = nl + " " + (nl === 1 ? W.line : W.lines) + (ni ? " + " + plural(ni, "item") : "") +
       " on " + S.visible.length + " " + (S.visible.length === 1 ? W.card : W.cards);
-    if (S.visible.indexOf(S.pipe) < 0) S.pipe = S.visible.length ? S.visible[0] : -1;
+    if (S.visible.indexOf(S.pipe) < 0) {
+      var keepIn = S.visible.filter(function (i) { return !queueHides(i); });
+      S.pipe = keepIn.length ? keepIn[0] : S.visible.length ? S.visible[0] : -1;
+    }
     if (all[S.pipe] !== sel) { S.line = -1; S.tab = defaultTab(all[S.pipe]); S.igOpen = {}; }
     renderChips();
     renderActive();
@@ -283,9 +296,9 @@
     s.value = FS[facet];
     fitSelect(s);
   }
-  // a click outside an open checkbox dropdown closes it
+  // a click outside an open dropdown (a filter menu, the theme menu) closes it
   function closeDrops(e) {
-    Array.prototype.forEach.call(document.querySelectorAll(".filters details.cdrop"), function (d) {
+    Array.prototype.forEach.call(document.querySelectorAll(".filters details.cdrop, .who details.cdrop"), function (d) {
       if (d.open && !d.contains(e.target)) d.open = false;
     });
   }
@@ -312,18 +325,23 @@
     LINES.forEach(function (l) { tt[tierOf(l)] = 1; });
     facetSelect("f-tier", "tier", ["high", "medium", "low", "untiered"], {untiered: "unrated"}, tt);
   }
+  // a tracker may rename the column filter (T.columnNoun) and what a column shows as in it (T.columnText)
+  // a tracker may fold several columns into one filter entry (T.columnKey)
+  function colKey(v) { return T.columnKey ? T.columnKey(v) : v; }
+  function colText(v) { return T.columnText ? T.columnText(v) : v; }
   function fillSelect(id, values) {
     var s = $(id);
-    values.forEach(function (v) { var o = document.createElement("option"); o.value = v; o.textContent = id === "f-dir" ? dirLabel(v) : v; s.appendChild(o); });
+    values.forEach(function (v) { var o = document.createElement("option"); o.value = v; o.textContent = id === "f-dir" ? dirLabel(v) : id === "f-column" ? colText(v) : v; s.appendChild(o); });
   }
   function uniq(arr) { return arr.filter(function (x, i) { return x && arr.indexOf(x) === i; }).sort(); }
   function fillFilters() {
     ["f-column", "f-dir"].forEach(function (id) { $(id).innerHTML = '<option value="">any</option>'; });
-    var cols = uniq(LINES.map(function (l) { return l.column; })), order = D.columns || [];
+    var cols = uniq(LINES.map(function (l) { return colKey(l.column); })), order = D.columns || [];
     cols.sort(function (a, b) {
       var ia = order.indexOf(a), ib = order.indexOf(b);
       return (ia < 0 ? 9999 : ia) - (ib < 0 ? 9999 : ib);
     });
+    $("f-column-label").textContent = T.columnNoun || "column";
     fillSelect("f-column", cols);
     var LISTED = LINES.concat(ITEMS);
     fillSelect("f-dir", (D.dirs || []).filter(function (d) { return LISTED.some(function (o) { return o.dir === d; }); }));
@@ -342,6 +360,7 @@
     $("f-by").onchange = function () { FS.by = this.value; if (FS.by && FS.decision === "undecided") FS.decision = ""; changed(); };
     $("f-q").oninput = function () { FS.q = this.value; changed(true); };
     $("f-more").onclick = function () { toggleMore(); };
+    $("f-active").onclick = function () { S.showActive = !S.showActive; renderActive(); };
     $("f-reset").onclick = function () { FS = defaults(); syncControls(); changed(); };
     if (T.initFilters) T.initFilters();
   }
@@ -367,7 +386,7 @@
     $("f-q").value = FS.q;
   }
   // Every filter that is set is a removable chip, so a control tucked behind "more filters"
-  // never filters silently.
+  // never filters silently. The chips stay folded behind an "active filters (n)" button until it is clicked.
   function renderActive() {
     var chips = [], n = 0;
     function chip(id, text, hidden) {
@@ -376,19 +395,25 @@
       if (hidden) n++;
     }
     if (T.activeChips) T.activeChips(chip, "before");
-    if (FS.column) chip("column", "column: " + FS.column, true);
+    if (FS.column) chip("column", (T.columnNoun || "column") + ": " + colText(FS.column), true);
     if (FS.dir) chip("dir", "batch: " + dirLabel(FS.dir), true);
+    if (FS.tier) chip("tier", "confidence: " + (FS.tier === "untiered" ? "unrated" : FS.tier), true);
     if (FS.by) chip("by", "decided by: " + FS.by, true);
     if (T.activeChips) T.activeChips(chip, "after");
+    if (!chips.length) S.showActive = false;
     $("active-filters").innerHTML = chips.join(" ");
-    $("active-filters").hidden = !chips.length;
+    $("active-filters").hidden = !S.showActive;
+    $("f-active").hidden = !chips.length;
+    $("f-active").textContent = "active filters" + (chips.length ? " (" + chips.length + ")" : "");
+    $("f-active").setAttribute("aria-expanded", String(!!S.showActive));
     $("f-more").textContent = ($("more-filters").hidden ? "more filters" : "fewer filters") + (n ? " (" + n + ")" : "");
   }
   function renderProgress() {
     var total = 0, done = 0, sev = {major: {done: 0, total: 0}, minor: {done: 0, total: 0}};
     LINES.forEach(function (l) {
       if (!counted(l)) return;     // a line the tracker leaves out of the count (pipelines: landed changes)
-      total++; sev[sevOf(l)].total++; if (cur(l)) { done++; sev[sevOf(l)].done++; }
+      var sv = sev[sevOf(l)];
+      total++; if (sv) sv.total++; if (cur(l)) { done++; if (sv) sv.done++; }
     });
     S.progress = {done: done, total: total, sev: sev};
   }
@@ -421,17 +446,23 @@
   function cardHasItems(p) {
     return (p.items || []).some(function (it) { return !INFO_KINDS[it.kind]; });
   }
-  // a card the queue pane leaves out (hide done / hide with items), so j / k / J do not step onto it
+  // a card the queue pane leaves out (hide done / hide with items / not on the tracker's queue tab, T.queueShows), so j / k / J do not step onto it
   function queueHides(i) {
     var p = cards()[i];
-    return i !== S.pipe && !!p && ((S.hideDone && cardDone(p)) || (S.hideItems && cardHasItems(p)));
+    if (!p) return false;
+    if (T.queueShows && !T.queueShows(p)) return true;      // even the open card: a tab with nothing in it lists nothing
+    return i !== S.pipe && ((S.hideDone && cardDone(p)) || (S.hideItems && cardHasItems(p)));
   }
   function renderQueue() {
     if (T.renderQueue && T.renderQueue()) return;     // the tracker drew the pane itself (GOGPT checklist view)
-    var h = [], all = cards();
+    var h = [], all = cards(), prev = null;
     S.visible.forEach(function (i) {
       var p = all[i];
       if (queueHides(i)) return;
+      // a section header before the first card of a new section (T.queueSection: GOGPT's plant edits / proposed additions / watch list)
+      var sec = T.queueSection ? T.queueSection(p, prev, all.filter(function (x, j) { return S.visible.indexOf(j) >= 0 && !queueHides(j); })) : "";
+      if (sec) h.push('<li class="qsec">' + sec + "</li>");
+      prev = p;
       var dots = {};
       p.lines.forEach(function (l) { dots[tierOf(l)] = 1; });
       var dd = ["high", "medium", "low"].filter(function (t) { return dots[t]; })
@@ -455,7 +486,9 @@
     S.line = lineIdx == null ? -1 : lineIdx;
     // a link straight to a line: open the tab that holds it
     if (S.line >= 0 && LINES[S.line] && S.tab !== sevOf(LINES[S.line])) S.tab = sevOf(LINES[S.line]);
-    if (S.hideDone || S.hideItems) renderQueue();     // the card just left can drop out of the list now that it is no longer open
+    // T.beforeSelect: the tracker may switch its queue tab to the one holding this card (true when it did)
+    var tabMoved = T.beforeSelect ? T.beforeSelect(cards()[i]) : false;
+    if (S.hideDone || S.hideItems || tabMoved || T.queueShows) renderQueue();     // the card just left can drop out of the list now that it is no longer open
     var prev = $("pipes").querySelector("li.sel");
     if (prev) prev.classList.remove("sel");
     var li = $("pipes").querySelector('li[data-i="' + i + '"]');
@@ -487,11 +520,12 @@
     return chip(t === "untiered" ? "unrated" : t, t === "untiered" ? "" : t,
       t === "untiered" ? "no confidence rating on this record: defaults to hold" : (TIER_TIP[t] || t + " confidence"));
   }
+  // major is the default and the value table already tags each edit fill, change or clear, so only a minor line gets a chip
   function sevChip(l) {
     if (T.sevChip) return T.sevChip(l);
     var s = sevOf(l);
-    var what = l.reverified ? "checked, stands" : (KIND_LABEL[l.kind] || l.kind);
-    return chip(s + " · " + what, s, SEV_TIP[s]);
+    if (s !== "minor") return "";
+    return chip("minor · " + (l.reverified ? "checked, stands" : (KIND_LABEL[l.kind] || l.kind)), s, SEV_TIP[s]);
   }
   // One mark per proposed URL: ✓ when it loads, states the value and names the card; else the failed checks.
   function vmark(u, l) {
@@ -528,13 +562,30 @@
     if (blankv(text)) return "";
     return ' <button type="button" class="copybtn" data-clip="' + esc(text) + '" aria-label="copy"' + tipAttrs("copy to clipboard") + ">⧉</button>";
   }
+  // where the current text sits inside the proposed one (whitespace may reflow), or null when it doesn't
+  function keptSpan(was, now) {
+    var toks = String(was).trim().split(/\s+/).filter(Boolean);
+    if (!toks.length) return null;
+    var m = new RegExp(toks.map(function (t) { return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }).join("\\s+")).exec(now);
+    return m ? [m.index, m.index + m[0].length] : null;
+  }
+  // a proposed value, tinted `cls`. When it keeps the current text and adds to it, only the added text is tinted.
+  function newvHtml(was, now, cls) {
+    var s = String(now), k = blankv(was) ? null : keptSpan(was, s);
+    function hl(x) {
+      var m = /^(\s*)([\s\S]*?)(\s*)$/.exec(x);
+      return m[2] ? m[1] + '<span class="newv ' + cls + '">' + esc(m[2]) + "</span>" + m[3] : x;
+    }
+    if (!k) return hl(s);
+    return hl(s.slice(0, k[0])) + '<span class="keptv">' + esc(s.slice(k[0], k[1])) + "</span>" + hl(s.slice(k[1]));
+  }
   // one value row: field | now | proposed | tag
   function valueRow(c, was, now, reverified, l) {
     var wasH = blankv(was) ? "" : "<span>" + esc(was) + "</span>";
     var nowH, t = "", same = false;
     if (!blankv(was) && String(was).trim() === String(now).trim()) { nowH = wasH; same = true; t = reverified ? "re-verified" : ""; }
     else if (blankv(now)) { nowH = '<span class="newv c-' + tierOf(l || {}) + '">(clear)</span>'; t = "clear"; }
-    else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + tierOf(l || {}) + '">' + esc(now) + "</span>" + copyBtn(now); }
+    else { t = blankv(was) ? "fill" : "change"; nowH = newvHtml(was, now, "c-" + tierOf(l || {})) + copyBtn(now); }
     return '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";
   }
   function valueRows(l) {
@@ -571,32 +622,45 @@
   function detailsHtml(l) {
     if (T.lineDetails) { var x = T.lineDetails(l); if (x != null) return x; }
     var d = [];
-    if (l.action) d.push('<div class="dtxt"><span class="k">what to do in the GEM form:</span> ' + esc(l.action) + "</div>");
-    if (l.notes) d.push('<div class="dtxt"><span class="k">researcher notes:</span> ' + esc(l.notes) + "</div>");
+    if (l.action) d.push('<div class="dtxt"><span class="k">' + (T.actionLabel || "what to do in the GEM form") + '</span>' + linkText(l.action) + "</div>");
+    if (l.notes) d.push('<div class="dtxt"><span class="k">researcher notes</span>' + linkText(l.notes) + "</div>");
     var vs = l.verifications || {};
     Object.keys(vs).forEach(function (u) {
       if (vs[u] && vs[u].note) d.push('<div class="dtxt"><span class="k">' + esc(u) + ":</span> " + esc(vs[u].note) + "</div>");
     });
+    if (T.hideRecord) return '<details data-more><summary>notes</summary>' + d.join("") + "</details>";   // a tracker whose reviewers do not need the record line
     var misc = ["batch " + dirLabel(l.dir), "default " + (l.default || "hold"), "record " + (l.record_id || "?")];
     if (l.source_language && l.source_language !== "en") misc.push("source language " + l.source_language);
     if (l.lane) misc.push("lane " + l.lane);
     d.push('<div class="dtxt"><span class="k">record:</span> ' + esc(misc.join(" · ")) + "</div>");
     return '<details data-more><summary>notes &amp; record</summary>' + d.join("") + "</details>";
   }
+  // The calls a line offers: [[decision, label, tip], ...] plus whether the suggest form is on.
+  // A tracker's lineActions(line) replaces the default (GOGPT's "no suggested changes" line offers checked / hold for later).
+  var DEFAULT_ACTIONS = {buttons: [["accept", "accept", ""], ["hold", "hold", ""], ["reject", "reject", ""]], suggest: true};
+  function lineActions(l) {
+    var a = T.lineActions ? T.lineActions(l) : null;
+    return a || DEFAULT_ACTIONS;
+  }
+  function offers(l, decision) {
+    var a = lineActions(l);
+    if (decision === "suggest") return a.suggest !== false;
+    return a.buttons.some(function (b) { return b[0] === decision; });
+  }
   function lineHtml(l) {
     var chips = T.lineChips ? T.lineChips(l, [tierChip(l), sevChip(l)]) : [tierChip(l), sevChip(l)];
     var title = T.lineTitle ? T.lineTitle(l) : (l.column || "");
     var where = T.lineWhere ? T.lineWhere(l) : (l.row_label || "");
-    var h = '<div class="row1"><span class="col">' + esc(title) + "</span> " + chips.join(" ") +
+    var h = '<div class="row1"><span class="col">' + esc(title) + "</span> " + chips.filter(Boolean).join(" ") +
       '<span class="where">' + esc(where) + "</span></div>";
     h += lineBody(l);
-    var dis = !Store.caps.decide;
-    h += '<div class="controls">' + [["accept", "a"], ["hold", "h"], ["reject", "r"]].map(function (b) {
+    var dis = !Store.caps.decide, acts = lineActions(l);
+    h += '<div class="controls">' + acts.buttons.map(function (b) {
       return '<button type="button" class="b-' + b[0] + '" data-decide="' + b[0] + '"' +
-        (dis ? tipAttrs(NOT_YET) + ' aria-disabled="true"' : "") +
-        ' aria-pressed="' + (cur(l) === b[0]) + '">' + b[0] + "</button>";
-    }).join("") + (T.lineButtons ? T.lineButtons(l) : "") + '<button type="button" class="b-suggest" data-suggest="1"' + (dis ? ' aria-disabled="true"' + tipAttrs(NOT_YET) : "") +
-      ' aria-pressed="' + (T.suggestPressed ? !!T.suggestPressed(l) : cur(l) === "suggest") + '">suggest</button>' + (cur(l) ? '<button type="button" class="ghost" data-undo="1">undo</button>' : "") +
+        (dis ? tipAttrs(NOT_YET) + ' aria-disabled="true"' : (b[2] ? tipAttrs(b[2]) : "")) +
+        ' aria-pressed="' + (cur(l) === b[0]) + '">' + esc(b[1] || b[0]) + "</button>";
+    }).join("") + (T.lineButtons ? T.lineButtons(l) : "") + (acts.suggest === false ? "" : '<button type="button" class="b-suggest" data-suggest="1"' + (dis ? ' aria-disabled="true"' + tipAttrs(NOT_YET) : "") +
+      ' aria-pressed="' + (T.suggestPressed ? !!T.suggestPressed(l) : cur(l) === "suggest") + '">suggest</button>') + (cur(l) ? '<button type="button" class="ghost" data-undo="1">undo</button>' : "") +
       (noteBox(l) ? '<input type="text" class="dnote" data-dnote="' + l._i + '" autocomplete="off" placeholder="note: why (optional)" aria-label="note on this call, optional"' +
       ' value="' + esc(noteOf(l)) + '"' + (dis ? " disabled" : "") + ">" : "") +
       (T.lineControls ? T.lineControls(l) : "") +
@@ -736,11 +800,29 @@
     var ctx = (T.cardContext ? T.cardContext(p) : [tierSummary(p)])
       .filter(Boolean).map(function (x) { return "<span>" + x + "</span>"; }).join("");
     var sub = T.cardSub ? T.cardSub(p) : "";
-    var h = '<div class="cardhead"><div class="headrow">' + "<h2>" + (T.showPid && !T.showPid(p) ? "" : '<span class="pid"' + tipAttrs(T.pidTip || "click to copy the id") + '>' + esc(p.pid) + "</span>") +
+    // a flat card (T.flatCard: GOGPT's addition and watch cards) has no tabs: every line, then the items
+    var flat = !!(T.flatCard && T.flatCard(p));
+    var bulk = T.bulkButtons ? T.bulkButtons(p) : null;      // null: the tracker leaves the core buttons
+    var h = '<div class="cardhead"><div class="headrow">' + "<h2>" + (T.showPid && !T.showPid(p) ? "" : '<span class="pid"' + tipAttrs(T.pidTip || "click to copy the id") + '>' + esc(T.pidText ? T.pidText(p) : p.pid) + "</span>") +
       '<a href="#" class="only" data-tab="all"' + tipAttrs("review everything on this " + W.card + ": every " + W.line + " (filters ignored) and every item") + '>' + esc(p.name || "(no name)") + "</a>" + copyBtn(p.name) +
       (sub ? '<span class="hseg">' + esc(sub) + "</span>" : "") + '</h2><div class="bulkbtns">' +
-      (T.bulkButtons ? T.bulkButtons(p) : bulkButtons(p)) +
+      (bulk == null ? bulkButtons(p) : bulk) +
       '</div></div><div class="ctx">' + ctx + "</div>";
+    if (flat) {
+      S.shown = [];
+      h += '<div class="flatcard">';
+      p.lines.forEach(function (l) {
+        S.shown.push(l._i);
+        h += '<div class="line tier-' + tierOf(l) + (cur(l) ? " d-" + cur(l) : "") + ((T.dimmed ? T.dimmed(l) : grayed(l)) ? " dim" : "") +
+          (T.lineClass ? T.lineClass(l) : "") + (l._i === S.line ? " cur" : "") + '" id="line-' + l._i + '" data-i="' + l._i + '">' + lineHtml(l) + "</div>";
+      });
+      if (p.items.some(function (it) { return !INFO_KINDS[it.kind]; })) h += itemsHtml(p);
+      card.innerHTML = h + "</div>";
+      if (S.line < 0 || S.shown.indexOf(S.line) < 0) S.line = S.shown.length ? S.shown[0] : -1;
+      var fel = S.line >= 0 && $("line-" + S.line);
+      if (fel) fel.classList.add("cur");
+      return;
+    }
     var nOpenItems = p.items.filter(function (it) { return !it.call && !INFO_KINDS[it.kind]; }).length, nItems = p.items.filter(function (it) { return !INFO_KINDS[it.kind]; }).length;
     function todo(n, total) {
       if (!total) return "(0)";
@@ -748,17 +830,21 @@
       return "(" + (n === total ? n : n + " of " + total) + " to decide)";
     }
     var bySev = {major: p.lines.filter(function (l) { return sevOf(l) === "major"; }), minor: p.lines.filter(function (l) { return sevOf(l) === "minor"; })};
-    h += '<div class="tabs" role="tablist">' + SEV.map(function (s) {
+    // T.collapseTabs: only the major tab shows until the + opens the rest; a card open on another tab shows them all
+    var folded = !!T.collapseTabs && !S.moreTabs && S.tab === "major";
+    var fold = !T.collapseTabs ? "" : '<button type="button" class="tabfold" data-tabfold="' + (folded ? "open" : "close") + '" aria-expanded="' + !folded + '"' +
+      tipAttrs(folded ? "show the minor changes, items and everything tabs" : "hide the minor changes, items and everything tabs") + ">" + (folded ? "+" : "&minus;") + "</button>";
+    h += '<div class="tabs" role="tablist">' + (folded ? ["major"] : SEV).map(function (s) {
       // the tab counts leave out the lines the tracker does not count (T.counted; pipelines: changes the backend already holds)
       var live = bySev[s].filter(counted);
       var openS = live.filter(function (l) { return !cur(l); }).length;
       var inView = live.filter(function (l) { return match(l, p, FS, null, FS.q.trim().toLowerCase()); }).length;
       var hid = live.length - inView;
       return '<button type="button" role="tab" data-tab="' + s + '" aria-selected="' + (S.tab === s) + '"' + tipAttrs(hid ? SEV_TIP[s] + ". The filters show " + inView + " of " + live.length + " here; the count below ignores them" : SEV_TIP[s]) + ">" +
-        SEV_LABEL[s] + " " + todo(openS, live.length) + (hid ? ' <span class="n">&middot; ' + inView + " shown</span>" : "") + "</button>";
-    }).join("") +
+        SEV_LABEL[s] + " " + todo(openS, live.length) + (hid ? ' <span class="n">&middot; ' + inView + " shown</span>" : "") + "</button>" + (s === "major" && folded ? fold : "");
+    }).join("") + (folded ? "</div></div>" :
       '<button type="button" role="tab" data-tab="items" aria-selected="' + (S.tab === "items") + '"' + (p._ni < nItems && itemsInView(FS) ? tipAttrs("the filters show " + p._ni + " of this " + W.card + "'s " + nItems + " items here; this tab lists all of them, and the count ignores the filters") : "") + ">items " + todo(nOpenItems, nItems) + (p._ni < nItems && itemsInView(FS) ? ' <span class="n">&middot; ' + p._ni + " shown</span>" : "") + "</button>" +
-      '<button type="button" role="tab" data-tab="all" aria-selected="' + (S.tab === "all") + '"' + tipAttrs("every " + W.line + " (filters ignored) and every item on this " + W.card + "; also: click the name") + '>everything</button></div></div>';
+      '<button type="button" role="tab" data-tab="all" aria-selected="' + (S.tab === "all") + '"' + tipAttrs("every " + W.line + " (filters ignored) and every item on this " + W.card + "; also: click the name") + '>everything</button>' + fold + "</div></div>");
     if (S.tab === "items") {
       S.shown = []; S.line = -1;
       // with a filter that puts items in view, the items tab shows the matching items only
@@ -773,9 +859,11 @@
     if (S.pin === S.pipe && !keep.length) { keep = base.slice(); hidden = 0; }
     var groups = (T.groupLines && T.groupLines(p, keep)) || [{label: "", lines: keep, plain: true}];
     S.shown = [];
+    var firstSeg = true;
     groups.forEach(function (g) {
       if (!g.lines.length) return;
-      if (!g.plain) h += '<div class="segdiv">' + (g.html != null ? g.html : esc(g.label)) + "</div>";
+      // the first group heading sits right under the tab strip, so it needs no rule of its own
+      if (!g.plain) { h += '<div class="segdiv' + (firstSeg ? " first" : "") + '">' + (g.html != null ? g.html : esc(g.label)) + "</div>"; firstSeg = false; }
       g.lines.forEach(function (l) {
         S.shown.push(l._i);
         h += '<div class="line tier-' + tierOf(l) + (cur(l) ? " d-" + cur(l) : "") + ((T.dimmed ? T.dimmed(l) : grayed(l)) ? " dim" : "") +
@@ -960,6 +1048,7 @@
     var l = LINES[S.line];
     if (S.tab === "items") return toast("the items tab takes calls, not change decisions: press i to go back to the changes");
     if (!l) return;
+    if (!offers(l, decision)) return toast("this " + W.line + " does not take " + (VERB[decision] || decision) + ": use the buttons it shows");
     dropNoteSave();
     save(l, {key: l.key, decision: decision, note: noteBox(l) ? noteOf(l) : ""}, advance);
   }
@@ -1042,6 +1131,7 @@
   function suggestKey(e) {
     if (e && e.preventDefault) e.preventDefault();   // the "s" must not land in the form's input
     if (S.tab === "items") return toast("the items tab takes calls, not suggestions: press i to go back to the " + W.lines);
+    if (LINES[S.line] && !offers(LINES[S.line], "suggest")) return toast("this " + W.line + " takes no suggestion: use the buttons it shows");
     openSuggest(LINES[S.line]);
   }
   // the keyboard map; a tracker adds or replaces keys with T.keys
@@ -1158,6 +1248,25 @@
       syncControls(); S.pin = keepPipe; refilter(true); writeRoute(false);
       return;
     }
+    var tf = e.target.closest("button[data-tabfold]");
+    if (tf) {     // closing goes back to the major tab, the only one left showing
+      var opening = tf.getAttribute("data-tabfold") === "open";
+      function foldTabs() {
+        S.moreTabs = opening;
+        if (!S.moreTabs) S.tab = "major";
+        renderCard();
+      }
+      // T.tabFoldNotice: a word before the tabs open (GOGPT: what is on them is beyond the update research). "OK, I understand" leaves them folded; "Show anyway" opens them
+      if (opening && T.tabFoldNotice) {
+        var dlg = $("dialog");
+        dlg.setAttribute("data-kind", "notice");
+        dlg.innerHTML = "<p>" + esc(T.tabFoldNotice) + '</p><div class="actions"><button type="button" class="dlg-alt" id="dlg-show">Show anyway</button><button type="button" class="dlg-ok" id="dlg-close">OK, I understand</button></div>';
+        $("dlg-close").onclick = function () { dlg.close(); };
+        $("dlg-show").onclick = function () { dlg.close(); foldTabs(); };
+        dlg.showModal();
+      } else foldTabs();
+      return;
+    }
     var tb = e.target.closest("[data-tab]");
     if (tb && tb.tagName === "A") e.preventDefault();
     if (tb) {
@@ -1184,7 +1293,7 @@
 
   // ---- bulk ----
   // The targets are the CURRENT filtered lines of the open card. Lines already decided, and lines the tracker does not count, are skipped. T.bulkTargets(mode, line) may refuse a line ("other").
-  function bulkTargets(mode) {
+  function bulkTargets(mode) {     // every line the bulk button covers; a line that does not offer accept (T.lineActions) is skipped
     var q = FS.q.trim().toLowerCase();
     var t = {lines: [], byKind: {}, decision: "accept", skip: {decided: 0, other: 0}, extra: {}};
     var p = cards()[S.pipe];
@@ -1195,7 +1304,7 @@
       // the tracker may refuse a line: a string names its own skip reason (T.bulkSkip holds the text), false counts as "other"
       var tb = T.bulkTargets ? T.bulkTargets(mode, l) : null;
       if (typeof tb === "string") { t.extra[tb] = (t.extra[tb] || 0) + 1; return; }
-      if ((mode === "bulk-high" && tierOf(l) !== "high") || (mode === "bulk-minor" && sevOf(l) !== "minor") || tb === false) { t.skip.other++; return; }
+      if ((mode === "bulk-high" && tierOf(l) !== "high") || (mode === "bulk-minor" && sevOf(l) !== "minor") || tb === false || !offers(l, "accept")) { t.skip.other++; return; }
       t.lines.push(l);
       t.byKind[l.kind] = (t.byKind[l.kind] || 0) + 1;
     });
@@ -1526,8 +1635,19 @@
     });
     document.addEventListener("click", closeDrops);
     $("card").addEventListener("click", onCardClick);
+    // T.hideItemsSwitch false: no "hide with items" switch; T.hideDoneInFilters: the "hide done" switch sits in the filter row, not above the queue
+    var hi = T.hideItemsSwitch === false && $("hide-items"), hiL = hi && hi.closest("label");
+    if (hiL) hiL.remove();
+    var hd = T.hideDoneInFilters && $("hide-done"), hdL = hd && hd.closest("label"), more = $("f-more"), grp = more && more.closest(".fbtns");
+    if (grp) more = grp;
+    if (hdL && more && more.parentNode) {
+      var row = hdL.parentNode;
+      more.parentNode.insertBefore(hdL, more);
+      if (row && row.children && !row.children.length) row.remove();
+    }
     [["hide-done", "hideDone", "review-hide-done"], ["hide-items", "hideItems", "review-hide-items"]].forEach(function (c) {
       var box = $(c[0]);
+      if (!box) { S[c[1]] = false; return; }
       try { S[c[1]] = localStorage.getItem(c[2]) === "1"; } catch (e) { S[c[1]] = false; }
       box.checked = !!S[c[1]];
       box.addEventListener("change", function () {
@@ -1613,8 +1733,8 @@
     get REMOTE() { return REMOTE; }, applyRemote: applyRemote, busy: busy, rerender: rerender,
     get KIND_LABEL() { return KIND_LABEL; }, get CALL_LABEL() { return CALL_LABEL; }, get SEV_LABEL() { return SEV_LABEL; },
     NOT_YET: NOT_YET, cards: cards,
-    $: $, esc: esc, chip: chip, tipAttrs: tipAttrs, urlLink: urlLink, asList: asList, vmark: vmark, shortLink: shortLink, shortUrl: shortUrl,
-    tag: tag, copyBtn: copyBtn, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, tierChip: tierChip, sevChip: sevChip,
+    $: $, esc: esc, linkText: linkText, chip: chip, tipAttrs: tipAttrs, urlLink: urlLink, asList: asList, vmark: vmark, shortLink: shortLink, shortUrl: shortUrl,
+    tag: tag, copyBtn: copyBtn, newvHtml: newvHtml, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, tierChip: tierChip, sevChip: sevChip,
     tierSummary: tierSummary, cur: cur, tierOf: tierOf, sevOf: sevOf, dstate: dstate, blankv: blankv, dirLabel: dirLabel, timeOf: timeOf, et: et,
     toast: toast, banner: banner, copyText: copyText, refilter: refilter, changed: changed, renderQueue: renderQueue, renderCard: renderCard,
     renderActive: renderActive, syncControls: syncControls, setLine: setLine, selectPipe: selectPipe, writeRoute: writeRoute, applyRoute: applyRoute,
@@ -1622,7 +1742,7 @@
     isItemKind: isItemKind, itemsInView: itemsInView, kindLabel: kindLabel, callText: callText, itemHead: itemHead, plural: plural,
     settled: settled, grayed: grayed, counted: counted, isOpen: isOpen, defaultTab: defaultTab, decisionText: decisionText, pipeMatches: pipeMatches,
     save: save, undoCurrent: undoCurrent, noteOf: noteOf, noteBox: noteBox, dropNoteSave: dropNoteSave, setStat: setStat,
-    nextUndecided: nextUndecided, openSuggest: openSuggest, reload: function (data) { reload(data); },
+    nextUndecided: nextUndecided, decideCurrent: decideCurrent, lineActions: lineActions, routeHash: routeHash, openSuggest: openSuggest, reload: function (data) { reload(data); },
     get STICKY() { return STICKY; }, setSticky: function (msg) { STICKY = msg || ""; banner(); }
   };
 

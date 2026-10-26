@@ -43,6 +43,7 @@ function leaflet(calls) {
               fitBounds: rec("fitBounds"), setView: rec("setView"), on: noop, remove: noop, getCenter: noop, getZoom: noop};
     },
     tileLayer: function (url, o) { rec("tileLayer")(url, o); return layer(); },
+    layerGroup: function (ls) { rec("layerGroup")(ls); return layer(); },
     geoJSON: function (fc, o) { rec("geoJSON")(fc, o); return layer(true); },
     circleMarker: function (ll, o) { rec("circleMarker")(ll, o); return layer(true); }
   };
@@ -51,7 +52,7 @@ function leaflet(calls) {
 // a fresh context holding geo.js; opts.storage replaces the in-memory localStorage, opts.L is the Leaflet stub, opts.els the slots scan() finds
 function load(opts) {
   opts = opts || {};
-  var buttons = [button("map"), button("satellite")], clicks = [];
+  var buttons = [button("map"), button("satellite"), button("hybrid"), button("gray")], clicks = [];
   var ctx = {
     document: {
       body: null, documentElement: stub.element("html"), head: stub.element("head"),
@@ -105,28 +106,28 @@ test("tileXY matches an independent Web Mercator calculation", function () {
 test("basemap defaults to map and ignores a stored name it does not know", function () {
   var P = load();
   assert.equal(P.geo.basemap(), "map");
-  P.ctx.localStorage.setItem("review-basemap", "hybrid");
+  P.ctx.localStorage.setItem("review-basemap", "terrain");
   assert.equal(P.geo.basemap(), "map");
 });
 
 test("setBasemap keeps the choice in localStorage and flips aria-pressed", function () {
   var P = load();
-  assert.deepEqual(pressed(P), ["false", "false"]);
+  assert.deepEqual(pressed(P), ["false", "false", "false", "false"]);
   P.geo.setBasemap("satellite");
   assert.equal(P.ctx.localStorage.getItem("review-basemap"), "satellite");
   assert.equal(P.geo.basemap(), "satellite");
-  assert.deepEqual(pressed(P), ["false", "true"]);
+  assert.deepEqual(pressed(P), ["false", "true", "false", "false"]);
   P.geo.setBasemap("map");
-  assert.deepEqual(pressed(P), ["true", "false"]);
+  assert.deepEqual(pressed(P), ["true", "false", "false", "false"]);
 });
 
 test("setBasemap ignores a name that is not a basemap", function () {
   var P = load();
   P.geo.setBasemap("satellite");
-  P.geo.setBasemap("hybrid");
+  P.geo.setBasemap("terrain");
   assert.equal(P.geo.basemap(), "satellite");
   assert.equal(P.ctx.localStorage.getItem("review-basemap"), "satellite");
-  assert.deepEqual(pressed(P), ["false", "true"]);
+  assert.deepEqual(pressed(P), ["false", "true", "false", "false"]);
 });
 
 test("a localStorage that throws does not break basemap or setBasemap", function () {
@@ -134,7 +135,7 @@ test("a localStorage that throws does not break basemap or setBasemap", function
   var P = load({storage: {getItem: boom, setItem: boom}});
   assert.equal(P.geo.basemap(), "map");
   assert.doesNotThrow(function () { P.geo.setBasemap("satellite"); });
-  assert.deepEqual(pressed(P), ["false", "true"], "the buttons still follow the choice");
+  assert.deepEqual(pressed(P), ["false", "true", "false", "false"], "the buttons still follow the choice");
 });
 
 test("mapSlot returns a slot with the id, the label and a button per basemap", function () {
@@ -192,6 +193,58 @@ test("a drawn slot draws the candidate route, two end markers and fits the bbox"
     assert.deepEqual(calls.fitBounds.length, 1);
     assert.equal(calls.early, undefined);             // the view is set before any route or marker goes on
     assert.deepEqual(JSON.parse(JSON.stringify(calls.fitBounds[0][0])), [[20, 10], [22, 12]]);
+  });
+});
+
+test("hybrid and gray draw their label layers over the base as one group", function () {
+  return Promise.all([["hybrid", /World_Imagery/, [/World_Boundaries_and_Places/, /World_Transportation/]],
+                      ["gray", /World_Light_Gray_Base/, [/World_Light_Gray_Reference/]]].map(function (c) {
+    var calls = {}, el = slotEl("h");
+    var P = load({L: leaflet(calls), els: [el]});
+    P.geo.setBasemap(c[0]);
+    P.geo.mapSlot("h", {candidate: {features: [{geometry: {type: "LineString", coordinates: [[10, 20], [12, 22]]}}]}, bbox: [10, 20, 12, 22]});
+    P.geo.scan();
+    return later().then(function () {
+      var urls = calls.tileLayer.map(function (t) { return t[0]; });
+      assert.match(urls[0], c[1]);
+      assert.equal(urls.length, 1 + c[2].length);
+      c[2].forEach(function (re, i) { assert.match(urls[i + 1], re); });
+      assert.equal(calls.layerGroup.length, 1);
+      assert.equal(calls.layerGroup[0][0].length, urls.length);
+    });
+  }));
+});
+
+test("on the artifact page a map draws the route's gray picture under the route, no live tiles and no basemap buttons", function () {
+  var calls = {}, el = slotEl("s"), L = leaflet(calls);
+  L.imageOverlay = function (url, b, o) { calls.imageOverlay = [[url, b, o]]; return {addTo: function () { return this; }}; };
+  var P = load({L: L, els: [el]});
+  P.ctx.REVIEW_STATIC = {};
+  var pic = {asset: "a.jpg", url: "/_blob/abc", bounds: [[19, 9], [23, 13]], zoom: 7};
+  var html = P.geo.mapSlot("s", {candidate: {features: [{geometry: {type: "LineString", coordinates: [[10, 20], [12, 22]]}}]}, bbox: [10, 20, 12, 22], basemap: pic});
+  assert.doesNotMatch(html, /data-basemap=/);
+  P.geo.scan();
+  return later().then(function () {
+    assert.equal(calls.tileLayer, undefined);
+    assert.equal(calls.imageOverlay[0][0], "/_blob/abc");
+    assert.deepEqual(stub.plain(calls.imageOverlay[0][1]), [[19, 9], [23, 13]]);
+    assert.equal(calls.imageOverlay[0][2].pane, "tilePane");
+    assert.equal(calls.map[0][1].maxZoom, 10, "three zoom levels past the picture's own");
+  });
+});
+
+test("on the artifact page a route whose picture is not uploaded draws with no basemap", function () {
+  var calls = {}, el = slotEl("s2"), L = leaflet(calls);
+  L.imageOverlay = function () { calls.imageOverlay = true; return {addTo: function () { return this; }}; };
+  var P = load({L: L, els: [el]});
+  P.ctx.REVIEW_STATIC = {};
+  P.geo.mapSlot("s2", {candidate: {features: [{geometry: {type: "LineString", coordinates: [[10, 20], [12, 22]]}}]}, bbox: [10, 20, 12, 22], basemap: {asset: "a.jpg", bounds: [[19, 9], [23, 13]], zoom: 7}});
+  P.geo.scan();
+  return later().then(function () {
+    assert.equal(el.getAttribute("data-drawn"), "yes");
+    assert.equal(calls.tileLayer, undefined);
+    assert.equal(calls.imageOverlay, undefined);
+    assert.equal(calls.geoJSON.length, 2);
   });
 });
 

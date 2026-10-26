@@ -5,17 +5,27 @@
   var TB = (window.REVIEW_STATIC || {}).tracker || {};
 
   window.ReviewApp.define(function (A) {
-    var $ = A.$, esc = A.esc, chip = A.chip, tipAttrs = A.tipAttrs, blankv = A.blankv, cur = A.cur, S = A.S;
+    var $ = A.$, esc = A.esc, linkText = A.linkText, chip = A.chip, tipAttrs = A.tipAttrs, blankv = A.blankv, cur = A.cur, S = A.S;
     var ROW_LABEL = {};        // checklist row number -> its label (from the dataset's groups)
     var VIEW = "plants";       // the left pane: "plants" (the queue) or "checklist" (the QC/Country checklist groups)
+    var QTAB = "suggestions";  // the queue tab: "suggestions" (tracked plants with something proposed: edits, items, new units, watch), "check" (plants the batch proposed nothing for) or "new" (plants GEM does not track yet)
+    try { var qt = localStorage.getItem("review-qtab"); if (qt === "check" || qt === "new") QTAB = qt; } catch (e) { /* ignore */ }
     var closeoutCopy = {};     // the close-out panel's copy buttons: units, draft
 
-    var KIND_LABEL = {plant: "plant-wide", reverified: "re-verified", monitor: "watch item", entity: "new owner or operator to create"};
+    var KIND_LABEL = {plant: "plant-wide", reverified: "re-verified", checked: "no suggested changes", monitor: "watch item", entity: "new owner or operator to create"};
     var MONITOR_LABEL = {new_to_tracker: "watch item: new to the tracker", existing_plant: "watch item: existing plant"};
+    var LEAD_LABEL = {newunits: "new unit lead", newplants: "new plant lead"};
     var KIND_TIP = {concern: "a question the researcher raised about data already in GEM: a value that could not be checked, two sources that disagree, a possible duplicate. It never changes a cell by itself",
                     entity: "an owner, operator or parent that is not in GEM's entity list yet. Someone has to create it in the GEM web form before the ownership edit can land",
                     new_to_tracker: "a plant or project GEM does not track at all yet. The researcher found it but it did not clear the bar for a new row (too early, too small, or too thin on evidence). Decide whether it goes into the database now, stays on the watchlist, goes to the possible-updates sheet, or comes off the list",
-                    existing_plant: "something to watch on a plant GEM already tracks: a permit in progress, an expansion, a retirement date to confirm. The plant's row is not changed by this item"};
+                    existing_plant: "something to watch on a plant GEM already tracks: a permit in progress, an expansion, a retirement date to confirm. The plant's row is not changed by this item",
+                    lead: "the researcher found signs of a new unit or plant but not enough to write the row: no capacity, no status, or no source that states them. Decide whether it goes into the database now, gets researched further in the next batch, stays on the watchlist, goes to the possible-updates sheet, or comes off the list"};
+    // the three sections of the left list, in page order: what a card is decides where it sits (review_data.py card_kind)
+    var SECTION = {plant: "plants", addition: "proposed additions", watch: "watch list"};
+    var SECTION_TIP = {plant: "plants GEM tracks in this scope. On the suggestions tab: the ones with proposed cell edits, questions about existing data or owners to create. On the to check tab: the ones the batch proposed nothing for, which you mark checked once you have looked at them",
+                       addition: "new units the batch proposes, with the leads that are not ready to add yet. On the new tab: the plants GEM does not track yet",
+                       watch: "things to keep an eye on at plants GEM already tracks; nothing here changes a cell"};
+    var BY_PLANT = {};         // GEM plant id -> {plant: card index, addition: card index, watch: card index}
     var TIER_TIP = {high: "green: one fully checked source (a status change needs two independent publishers)",
                     medium: "yellow: a single source on a status change, or a source that only partly supports the value",
                     low: "red: a single weak or unchecked source"};
@@ -44,9 +54,20 @@
       var rows = (o.checks || []).map(function (n) { return "row " + n + (ROW_LABEL[n] ? ": " + ROW_LABEL[n] : ""); });
       return "QC/Country checklist group " + groupOf(o) + ": " + groupLabel(groupOf(o)) + (rows.length ? "\nticks " + rows.join("\n") : "\n(no checklist row: a gap the checklist does not cover)");
     }
-    function flagged(o, p) { return !!(o.pm_flag || (p && p.pm_flag)); }
     // "new:<name>" ids mark a plant GEM does not track yet (a discovery candidate on the monitor list)
     function untracked(p) { return !p.pid || p.pid.indexOf("new:") === 0; }
+    // plant (its edits) | addition (new plant, or new units and leads at a tracked plant) | watch; older datasets carry no card_kind
+    function cardKind(p) { return p.card_kind || (untracked(p) ? "addition" : "plant"); }
+    // the GEM plant id behind a card: the "<id>#add" and "<id>#watch" cards share it with the plant card; "" for a plant GEM does not track
+    function plantId(p) { return p.plant_pid != null ? p.plant_pid : (untracked(p) ? "" : String(p.pid || "").replace(/#(add|watch)$/, "")); }
+    function isLead(it) { return it.kind === "monitor" && !!it.lead_for; }
+    // the other cards of the same plant: [{kind, index, card}], in section order
+    function siblings(p) {
+      var id = plantId(p), by = id && BY_PLANT[id], out = [];
+      if (!by) return out;
+      ["plant", "addition", "watch"].forEach(function (k) { if (by[k] != null && plants()[by[k]] !== p) out.push({kind: k, index: by[k], card: plants()[by[k]]}); });
+      return out;
+    }
     function unitOf(p, id) {
       var us = (p && p.units) || [];
       for (var i = 0; i < us.length; i++) if (us[i].gem_unit_id === id) return us[i];
@@ -59,10 +80,12 @@
     function unitNames(p) {
       return p.units.map(function (u) { return String(u.unit_name || u.gem_unit_id || "").trim(); }).filter(Boolean);
     }
-    // where on the plant a line lands: "unit F701 (G100000401771)", "plant-wide (4 units)", "new row"
+    // a new row is a new unit (lane newunits) or a new plant; an older dataset without the lane goes by the unit name
+    function newUnit(l) { return l.lane ? l.lane === "newunits" : !!l.unit_name; }
+    // where on the plant a line lands: "unit F701 (G100000401771)", "plant-wide (4 units)", "under Fisk Generating Station" (a new unit row; a new plant row has no where)
     function rowLabel(l) {
-      if (l.kind === "new_row") return "new row";
       var p = plants()[l._p];
+      if (l.kind === "new_row") return newUnit(l) ? "under " + (l.plant_name || (p && p.name) || "the plant") : "";
       if (l.kind === "plant") {
         var n = 1 + (l.sibling_unit_ids || []).length;
         return "plant-wide" + (n > 1 ? " (" + n + " units)" : "");
@@ -97,18 +120,30 @@
     }
     // ticked values in the filter, leaving out the nothing-ticked sentinel
     function picked(v) { return (v || []).filter(function (x) { return x !== NO_COUNTRY; }); }
+    // the last state subset the reviewer picked: when the state menu goes away (the country is unticked) and comes back, that subset returns instead of all states
+    var lastStates = [];
+    function rememberStates() { var st = picked(FS().state); if (st.length) lastStates = st; }
+    // after the countries change: keep the states that are still offered, and bring the remembered subset back when the menu was gone
+    function reconcileStates(hadChoices) {
+      var f = FS(), ok = stateChoices(), keep = picked(f.state).filter(function (st) { return ok.indexOf(st) >= 0; });
+      if (!keep.length && !hadChoices && ok.length) keep = lastStates.filter(function (st) { return ok.indexOf(st) >= 0; });
+      f.state = keep.length === ok.length ? [] : keep;
+    }
     // drop a route's country or state that is not on this page
     function whereValid() {
       var fs = FS(), all = countries(), sts = stateChoices();
       return picked(fs.country).every(function (k) { return all.indexOf(k) >= 0; }) && picked(fs.state).every(function (st) { return sts.indexOf(st) >= 0; });
     }
+    // two-letter postal codes for the US states: the header boxes show the code, the state menu shows the code and the full name
+    var ABBR = {"Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR", "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE", "District of Columbia": "DC", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI", "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA", "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME", "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN", "Mississippi": "MS", "Missouri": "MO", "Montana": "MT", "Nebraska": "NE", "Nevada": "NV", "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM", "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH", "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI", "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX", "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA", "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY", "Puerto Rico": "PR"};
+    function abbr(st) { return ABBR[st] || st; }
     // one checkbox menu (the same as the pipelines reviewer's country menu): any ticked value matches, none ticked is no filter, each with its live count under the other filters
-    function checkMenu(id, label, values, field, counts) {
+    function checkMenu(id, label, values, field, counts, show) {
       var box = $(id), fs = FS(), sel = fs[field] || [], n = sel.length, was = box.querySelector("details"), open = was && was.open;
       box.hidden = !values.length;
       if (box.hidden) return;
       box.innerHTML = '<details class="cdrop"' + (open ? " open" : "") + "><summary>" + label + '</summary><div class="cmenu"><button type="button" class="ctoggle">' + (!n || picked(sel).length === values.length ? "deselect all" : "select all") + "</button>" +
-        values.map(function (k) { return '<label class="check"><input type="checkbox" value="' + esc(k) + '"' + (!n || sel.indexOf(k) >= 0 ? " checked" : "") + "> " + esc(k) + " (" + counts[k] + ")</label>"; }).join("") + "</div></details>";
+        values.map(function (k) { return '<label class="check"><input type="checkbox" value="' + esc(k) + '"' + (!n || sel.indexOf(k) >= 0 ? " checked" : "") + "> " + esc(show ? show(k) : k) + " (" + counts[k] + ")</label>"; }).join("") + "</div></details>";
     }
     // the country and state menus; the state menu shows once a country that has states is in view
     function renderCountries() {
@@ -122,9 +157,85 @@
         });
       });
       checkMenu("f-country", "country", all, "country", cc);
-      checkMenu("f-state", "state", sts, "state", sc);
+      checkMenu("f-state", "state", sts, "state", sc, function (st) { return abbr(st) === st ? st : abbr(st) + " - " + st; });
+      renderStatus();
     }
-    // header: every country as a box, alphabetical, with the plant count. Countries the filter leaves out are grayed; a click ticks or unticks that country. The states show the same way whenever the state menu does
+    // ---- status: the plant's current status (its units' statuses), grouped into in development and the rest ----
+    // statuses compare by letters only, so "pre-construction" and "Pre construction" match; an inferred status carries its age ("shelved - inferred 2 y"), which is dropped so every age is one choice
+    function statusBase(s) { return String(s || "").trim().replace(/\s+\d+\s*y(ears?)?$/i, ""); }
+    function statusKey(s) { return statusBase(s).toLowerCase().replace(/[^a-z]/g, ""); }
+    var DEV_STATUS = ["announced", "preconstruction", "construction", "shelved", "shelvedinferred"];
+    var DEV_LABEL = ["announced", "pre-construction", "construction", "shelved", "shelved - inferred"];
+    // the other statuses GEM uses, always in the menu so a page with no plant in one still shows it grayed out
+    var REST_LABEL = ["operating", "mothballed", "retired", "cancelled", "cancelled - inferred"];
+    function isDev(s) { return DEV_STATUS.indexOf(statusKey(s)) >= 0; }
+    // the statuses a card's plant has now: its units' statuses as they stand in the database. A status the researcher proposes (a change line, a new row) never counts; a card with no unit rows yet has no current status
+    function statusesOf(p) {
+      var out = [];
+      function add(units) { (units || []).forEach(function (u) { var v = statusBase(u.status); if (v && out.indexOf(v) < 0) out.push(v); }); }
+      add(p.units);
+      // an addition or watch card with no unit rows of its own takes its plant card's statuses, so "in development" keeps a plant's other cards in view
+      if (!out.length && !untracked(p) && cardKind(p) !== "plant") {
+        var at = BY_PLANT[plantId(p)], pc = at && at.plant != null ? plants()[at.plant] : null;
+        if (pc) add(pc.units);
+      }
+      return out;
+    }
+    // the page opens on the plants in development (plus the plants new to the database): the rest is under "other statuses" in the status menu, off until ticked
+    function devDefault() { return DEV_LABEL.concat([NEW_STATUS]); }
+    function isDefaultStatus(sel) { return sel.map(statusKey).sort().join("|") === devDefault().map(statusKey).sort().join("|"); }
+    // every status on the page: in development first (all five, announced to shelved, in that order), then the rest alphabetically (the known ones too); a status the page has no plant in is left out of `have` and shows grayed out
+    function statusChoices() {
+      var seen = {}, all = [];
+      plants().forEach(function (p) { statusesOf(p).forEach(function (s) { if (!seen[statusKey(s)]) { seen[statusKey(s)] = s; all.push(s); } }); });
+      var dev = DEV_STATUS.map(function (k, i) { return seen[k] || DEV_LABEL[i]; });
+      var rest = all.filter(function (s) { return !isDev(s); });
+      REST_LABEL.forEach(function (l) { if (!seen[statusKey(l)]) rest.push(l); });
+      rest.sort(function (a, b) { return a.localeCompare(b); });
+      return {dev: dev, rest: rest, have: all};
+    }
+    // "new to database": the plants GEM does not track yet (a card with no plant id), which have no current status to filter on
+    var NEW_STATUS = "new to database";
+    function statusOn(p, sel) {
+      if (untracked(p)) return sel.indexOf(NEW_STATUS) >= 0;
+      var ss = statusesOf(p);
+      if (!ss.length) return !(sel.length === 1 && sel[0] === NO_COUNTRY);     // a card whose status the page does not know stays in view unless every box is unticked
+      return ss.some(function (s) { return sel.some(function (x) { return statusKey(x) === statusKey(s); }); });
+    }
+    // the status menu in the bar: an "in development" box that ticks its five statuses together, each with its live count, then "new to database".
+    // The other statuses (operating, retired, cancelled and so on) sit in the same menu under an "other statuses" box, off by default
+    function renderStatus() {
+      var box = $("f-status");
+      if (!box) return;
+      var fs = FS(), q = fs.q.trim().toLowerCase(), ch = statusChoices(), hasNew = plants().some(untracked), all = ch.have.concat(hasNew ? [NEW_STATUS] : []), sel = fs.status || [], n = sel.length, counts = {};
+      var was = box.querySelector("details"), open = was && was.open;
+      box.hidden = !all.length;
+      if (box.hidden) return;
+      all.forEach(function (s) { counts[s] = 0; });
+      plants().forEach(function (p) {
+        var mine = untracked(p) ? [statusKey(NEW_STATUS)] : statusesOf(p).map(statusKey);
+        p.lines.concat(p.items).forEach(function (o) {
+          if (!A.match(o, p, fs, "status", q)) return;
+          all.forEach(function (s) { if (mine.indexOf(statusKey(s)) >= 0) counts[s]++; });
+        });
+      });
+      function avail(s) { return all.some(function (x) { return statusKey(x) === statusKey(s); }); }
+      function on(s) { return avail(s) && (!n || sel.some(function (x) { return statusKey(x) === statusKey(s); })); }
+      function group(id, label, tip, xs) {
+        if (!xs.length) return "";
+        var have = xs.filter(avail), k = have.filter(on).length;
+        return '<label class="check sgroup"' + tipAttrs(tip) + '><input type="checkbox" data-group="' + id + '"' + (have.length ? "" : " disabled") + (have.length && k === have.length ? " checked" : "") + (k && k < have.length ? ' data-partial="1"' : "") + "> <b>" + label + "</b></label>" +
+          xs.map(function (s) { var ok = avail(s); return '<label class="check schild' + (ok ? "" : " none") + '"' + (ok ? "" : tipAttrs("no plant on this page has this status")) + '><input type="checkbox" value="' + esc(s) + '"' + (ok ? "" : " disabled") + (on(s) ? " checked" : "") + "> " + esc(s) + " (" + (counts[s] || 0) + ")</label>"; }).join("");
+      }
+      var restOn = ch.rest.filter(on).length;
+      box.innerHTML = '<details class="cdrop"' + (open ? " open" : "") + '><summary>status' + (restOn ? ' <span class="n">+' + restOn + "</span>" : "") + '</summary><div class="cmenu"><button type="button" class="ctoggle">' + (!n || picked(sel).length === all.length ? "deselect all" : "select all") + "</button>" +
+        group("dev", "in development", "announced, pre-construction, construction, shelved and shelved-inferred: the plants the update is about", ch.dev) +
+        '<label class="check sgroup' + (hasNew ? "" : " none") + '"' + tipAttrs(hasNew ? "plants GEM does not track yet: the new plants this page proposes adding" : "no new plant on this page") + '><input type="checkbox" value="' + NEW_STATUS + '"' + (hasNew ? "" : " disabled") + (on(NEW_STATUS) ? " checked" : "") + "> <b>" + NEW_STATUS + " (" + (counts[NEW_STATUS] || 0) + ")</b></label>" +
+        group("rest", "other statuses", "every status outside in development: operating, retired, cancelled and so on. Off by default, so the page stays on the plants the update is about", ch.rest) + "</div></details>";
+      Array.prototype.forEach.call(box.querySelectorAll("input[data-partial]"), function (i) { i.indeterminate = true; });
+    }
+    // header: the ticked countries as boxes, alphabetical, then the ticked states whenever the state menu shows, then the plant count.
+    // A country or state the filter leaves out is not shown at all, and the boxes do nothing on a click: the filter dropdowns are the one place to tick and untick (Baird 2026-10-26)
     function renderScope() {
       var el = $("scope");
       if (!el || !D()) return;
@@ -135,28 +246,13 @@
         if (fs.country.length && fs.country.indexOf(p.country) < 0) return false;
         return !fs.state.length || fs.state.indexOf(p.state) >= 0;
       }).length;
-      function box(kind, name, tip, on) {
-        return '<span class="cbox' + (on ? "" : " off") + '" data-kind="' + kind + '" data-v="' + esc(name) + '"' + tipAttrs(tip + " (click to " + (on ? "remove" : "add") + ")") + ">" + esc(name) + "</span>";
-      }
+      function box(name, tip, shown) { return '<span class="cbox"' + tipAttrs(tip) + ">" + esc(shown || name) + "</span>"; }
       function sorted(xs) { return xs.slice().sort(function (a, b) { return a.localeCompare(b); }); }
-      el.innerHTML = sorted(countries()).map(function (k) { return box("country", k, "country filter: " + k, inView.indexOf(k) >= 0); }).join("") +
-        (stateChoices().length ? sorted(stateChoices()).map(function (st) { return box("state", st, "state filter: " + st, !fs.state.length || fs.state.indexOf(st) >= 0); }).join("") : "") +
+      var states = stateChoices().filter(function (st) { return !fs.state.length || fs.state.indexOf(st) >= 0; });
+      el.innerHTML = sorted(inView).map(function (k) { return box(k, "country filter: " + k); }).join("") +
+        sorted(states).map(function (st) { return box(st, "state filter: " + st, abbr(st)); }).join("") +
         '<span class="nplants">' + plural(n, "plant") + "</span>";
-      el.onclick = function (e) {
-        var b = e.target.closest && e.target.closest(".cbox[data-kind]");
-        if (!b) return;
-        var f = FS(), v = b.getAttribute("data-v"), flip = function (xs) { return xs.indexOf(v) >= 0 ? xs.filter(function (k) { return k !== v; }) : xs.concat([v]); };
-        if (b.getAttribute("data-kind") === "state") {
-          var left = flip(f.state.length ? picked(f.state) : stateChoices());   // [NO_COUNTRY] is every box unticked, so it must stay distinct from empty (all)
-          f.state = left.length === stateChoices().length ? [] : left.length ? left : [NO_COUNTRY];
-        } else {
-          var keep = flip(countriesInView());
-          f.country = keep.length === countries().length ? [] : keep.length ? keep : [NO_COUNTRY];
-          var ok = stateChoices();
-          f.state = picked(f.state).filter(function (st) { return ok.indexOf(st) >= 0; });
-        }
-        A.changed();
-      };
+      el.onclick = null;
     }
 
     // ---- checklist groups ----
@@ -178,6 +274,17 @@
     // captive power: the records that tick checklist rows 6 and 44 (captive plants at LNG terminals) and row 39 (gas-fired data centers, US only), selected together
     var CAPTIVE_ROWS = [6, 39, 44];
     function isCaptive(o) { return (o.checks || []).some(function (n) { return CAPTIVE_ROWS.indexOf(n) >= 0; }); }
+    // plants with a related data center: any record of the plant (on any of its cards) ticks row 39, the gas-fired data center row; read once per loaded dataset
+    var DC_ROW = 39, dcFor = null, dcSet = {};
+    function hasDataCenter(p) {
+      if (dcFor !== D()) {
+        dcFor = D(); dcSet = {};
+        plants().forEach(function (q) {
+          if (q.lines.concat(q.items).some(function (o) { return (o.checks || []).indexOf(DC_ROW) >= 0; })) dcSet[plantId(q) || q.pid] = true;
+        });
+      }
+      return !!dcSet[plantId(p) || p.pid];
+    }
     function captiveStats() {
       var s = {total: 0, open: 0};
       A.LINES.concat(A.ITEMS).forEach(function (o) {
@@ -189,6 +296,40 @@
     }
     function pmCount() {
       return A.LINES.concat(A.ITEMS).filter(function (o) { return o.pm_flag; }).length + plants().filter(function (p) { return p.pm_flag; }).length;
+    }
+    // ---- the queue tabs: suggestions | to check | new ----
+    function qtabOf(p) { return untracked(p) && !p.statewide ? "new" : noChanges(p) ? "check" : "suggestions"; }
+    function setQtab(t) {
+      QTAB = t;
+      try { localStorage.setItem("review-qtab", t); } catch (e) { /* ignore */ }
+    }
+    // the tab buttons with how many cards each would list under the current filters, and how many of them are still open
+    function renderQtabs() {
+      var box = $("qtabs");
+      if (!box) return;
+      var all = plants(), c = {suggestions: {n: 0, open: 0}, check: {n: 0, open: 0}, new: {n: 0, open: 0}};
+      S.visible.forEach(function (i) {
+        var p = all[i], done = p.lines.length > 0 && !p.lines.some(A.isOpen), t = c[qtabOf(p)];
+        if (S.hideDone && done && i !== S.pipe) return;
+        t.n++;
+        if (!done) t.open++;
+      });
+      var tip = {suggestions: "plants GEM tracks with proposed edits, questions or owners to create, then their proposed new units and the watch list",
+                 new: "plants GEM does not track yet that the batch proposes adding",
+                 check: "plants the batch proposed nothing for: look each one over, set its Last Updated and Research status in the database, then mark it checked"};
+      box.innerHTML = [["suggestions", "suggestions"], ["check", "to check"], ["new", "new"]].map(function (t) {
+        var k = c[t[0]];
+        return '<button type="button" role="tab" data-qtab="' + t[0] + '" aria-selected="' + (QTAB === t[0]) + '"' + tipAttrs(tip[t[0]] + ". " + k.open + " of the " + k.n + " listed still open") + ">" +
+          t[1] + ' <span class="n">' + k.n + "</span></button>";
+      }).join("");
+    }
+    function onQtabClick(e) {
+      var b = e.target.closest("button[data-qtab]");
+      if (!b || b.getAttribute("data-qtab") === QTAB) return;
+      setQtab(b.getAttribute("data-qtab"));
+      var first = S.visible.filter(function (i) { return qtabOf(plants()[i]) === QTAB; })[0];
+      if (first != null) A.selectPipe(first); else A.renderQueue();
+      $("pipes").scrollTop = 0;
     }
     function setView(v) {
       if (v !== "plants" && v !== "checklist") return;
@@ -283,6 +424,8 @@
       for (var dy = 0; dy < 2; dy++) {
         for (var dx = 0; dx < 2; dx++) {
           var u = ESRI_TILE.replace("{z}", LOC_ZOOM).replace("{y}", y0 + dy).replace("{x}", x0 + dx);
+          // tiles embedded at build time (an artifact page cannot load images from other hosts)
+          if (pt.tiles && pt.tiles.uris && pt.tiles.x0 === x0 && pt.tiles.y0 === y0) u = pt.tiles.uris[dy * 2 + dx];
           imgs += '<img loading="lazy" alt="" src="' + esc(u) + '" style="left:' + (dx * 50) + "%;top:" + (dy * 50) + '%">';
         }
       }
@@ -335,15 +478,15 @@
     }
     function newRowBody(l) {
       var units = l.units || [];
-      var h = '<div class="row1">' + chip(l.lane === "newunits" ? "new unit on a tracked plant" : "new plant", "newrow") +
-        ' <span class="faint">' + (l.lane === "newunits" ? "a unit row to add under a plant GEM already tracks" :
-          "a plant GEM does not track yet; every field below is new" + (units.length ? ", with " + units.length + " unit row" + (units.length === 1 ? "" : "s") + " to add under it. One call covers the plant and its units" : "")) + "</span></div>";
+      // the title already says new unit or new plant; a new plant that brings unit rows gets one line saying one call covers them all
+      var h = newUnit(l) || !units.length ? "" :
+        '<div class="faint">A plant GEM does not track yet, with ' + units.length + " unit row" + (units.length === 1 ? "" : "s") + " to add under it. One call covers the plant and its units.</div>";
       h += newRowTable(l.proposed_values, l.refs_by_col, l);
       // a new plant's unit rows: each one its own small table under the plant fields
       units.forEach(function (u) {
         h += '<div class="row1 newunit"><span class="col">unit ' + esc(u.unit_name || "(unnamed)") + "</span></div>" + newRowTable(u.fields, u.refs_by_col, l);
-        if (u.action) h += '<div class="dtxt"><span class="k">what to do in the GEM form:</span> ' + esc(u.action) + "</div>";
-        if (u.notes) h += '<div class="dtxt"><span class="k">researcher notes:</span> ' + esc(u.notes) + "</div>";
+        if (u.action) h += '<div class="dtxt"><span class="k">what to change</span>' + linkText(u.action) + "</div>";
+        if (u.notes) h += '<div class="dtxt"><span class="k">researcher notes</span>' + linkText(u.notes) + "</div>";
       });
       return h;
     }
@@ -362,18 +505,81 @@
          "The export does not show this unit's IRP box; check it in the web form.") + " QC/Country checklist row 37.";
       return chip("IRP" + (box === "no" ? ": tick the box" : ""), box === "no" ? "irp todo" : "irp", tip);
     }
-    // the checklist group chip every line and item carries: "checklist 3" with the rows it ticks on hover
+    // the checklist group chip every line and item carries (not a new row: every new row is in the same group): the group's words, "status and timeline", with the rows it ticks on hover
     function groupChip(o) {
-      var gid = groupOf(o);
-      return chip("checklist " + (gid === "other" ? "gap" : gid), "grp", groupTip(o));
+      var gid = groupOf(o), label = groupLabel(gid);
+      // chips read lowercase; a label that opens with an acronym ("IDs, IRPs and data centers") keeps its case
+      if (/^[A-Z][a-z]/.test(label)) label = label.charAt(0).toLowerCase() + label.slice(1);
+      return chip(gid === "other" ? "no checklist row" : label, "grp", groupTip(o));
+    }
+    // the one chip on a new row: how many of its source links were fetched and found stating a value (url_verifier.py at staging). The marks in the row's table show each link
+    function readinessChip(l) {
+      var urls = A.asList(l.proposed_refs), v = l.verifications || {}, n = urls.length;
+      var k = urls.filter(function (u) { return v[u] && v[u].contains_value; }).length;
+      var links = n + " source link" + (n === 1 ? "" : "s");
+      if (!n) return chip("no source link", "single", "this row cites no source link: read the researcher notes before accepting");
+      if (!k) return chip("no source verified", "single", "none of the " + links + " on this row was checked to state its value: read the sources before accepting");
+      return chip(k + " of " + n + " source" + (n === 1 ? "" : "s") + " verified", k === n ? "ready" : "single",
+        (k === n ? "every source link" : k + " of the " + links) + " on this row loaded and states a value on the page. The marks in the table below show each link's checks");
     }
     function pmChip(o) { return chip("PM", "pm", "flagged for the project manager" + (o.pm_note ? ": " + o.pm_note : "")); }
     // the ask-the-PM box: a flag beside the decision, with a short note. Works on a line, an item or the whole plant.
     function pmBox(o, attr, id) {
       var dis = !A.Store.caps.decide, on = !!o.pm_flag;
-      return '<label class="pmbox' + (on ? " on" : "") + '"' + tipAttrs(dis ? A.NOT_YET : "flag this for the GOGPT project manager. The flag sits beside your decision: you can accept something and still ask about it. Flagged items are listed together in the evidence file and can be filtered with \"ask the PM\"") +
+      return '<label class="pmbox' + (on ? " on" : "") + '"' + tipAttrs(dis ? A.NOT_YET : "flag this for the GOGPT project manager. The flag sits beside your decision: you can accept something and still ask about it. Flagged items are listed together in the evidence file") +
         '><input type="checkbox" ' + attr + '="' + esc(id) + '"' + (on ? " checked" : "") + (dis ? " disabled" : "") + "> ask the PM</label>" +
         (on ? '<input type="text" class="pmnote" ' + attr + '-note="' + esc(id) + '" placeholder="question for the PM" value="' + esc(o.pm_note || "") + '"' + (dis ? " disabled" : "") + ">" : "");
+    }
+
+    // the plant's current unit statuses and capacity for the card header: "operating 2, retired 1" and "450 MW" (units with no capacity in the export are left out of the sum)
+    function unitStatusText(p) {
+      var by = {}, order = [];
+      (p.units || []).forEach(function (u) { var s = statusBase(u.status); if (!s) return; if (!(s in by)) { by[s] = 0; order.push(s); } by[s]++; });
+      return order.length ? esc("status: " + order.map(function (s) { return s + (p.units.length > 1 ? " " + by[s] : ""); }).join(", ")) : "";
+    }
+    function unitCapacityText(p) {
+      var n = 0, any = false;
+      (p.units || []).forEach(function (u) { var v = parseFloat(String(u.capacity || "").replace(/,/g, "")); if (isFinite(v)) { n += v; any = true; } });
+      return any ? esc(String(Math.round(n * 10) / 10).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " MW") : "";
+    }
+    // the latest Last Updated date over the plant's units, as the export shows it (an ISO date, so the largest string is the latest)
+    function lastUpdatedText(p) {
+      var best = "";
+      (p.units || []).forEach(function (u) { var v = String(u.last_updated || "").trim(); if (v > best) best = v; });
+      return best ? esc("last updated " + best) : "";
+    }
+    // a plant card with no suggested changes: its one line is the "checked" line
+    function noChanges(p) { return !!p.no_changes || (cardKind(p) === "plant" && p.lines.length > 0 && p.lines.every(function (l) { return l.kind === "checked"; })); }
+    // a tracked plant counts as checked when every change on it has a call other than hold (a no-change plant: its line is marked checked)
+    function plantChecked(p) { return p.lines.length > 0 && p.lines.every(function (l) { var d = cur(l); return d && d !== "hold"; }); }
+    function trackedPlants() { return plants().filter(function (p) { return cardKind(p) === "plant" && !p.statewide && !untracked(p); }); }
+    // the body of a "checked" line: what to do, then every unit of the plant with its research bookkeeping as the export shows it
+    function checkedBody(l) {
+      var p = plants()[l._p], units = p.units || [];
+      var n = (p.items || []).length;
+      var h = '<p class="checked-say">The research batch proposed no change for this plant.' +
+        (n ? " It did leave " + (n === 1 ? "a note" : n + " notes") + " below, which may need a fix by hand." : "") +
+        " Look it over, set Last Updated and Research status in the database, then mark it checked here. Hold it for later if you want to come back to it.</p>";
+      if (!units.length) return h + '<p class="muted">The export lists no unit for this plant.</p>';
+      // the rows sit in status groups: the in-development statuses first (announced to shelved, in that order), then the rest alphabetically, each group in export order.
+      // Only the units in development need their bookkeeping set; the others (operating, retired and so on) are grayed out
+      var sorted = unitsByStatus(units), other = sorted.filter(function (u) { return !isDev(u.status); }).length;
+      // the table sits in a box that scrolls sideways when the window is narrow, so its columns keep their widths instead of crushing into each other
+      h += '<div class="units-wrap"><table class="pair units"><tr><th>unit</th><th>status</th><th>capacity (MW)</th><th>last updated</th><th>researcher</th><th>research status</th></tr>' +
+        sorted.map(function (u) {
+          return "<tr" + (isDev(u.status) ? "" : ' class="other"') + "><td>" + esc(unitText(u)) + "</td><td>" + esc(u.status || "") + "</td><td>" + esc(u.capacity || "") + "</td><td>" + esc(u.last_updated || "") + "</td><td>" + esc(u.researcher || "") + "</td><td>" + esc(u.research_status || "") + "</td></tr>";
+        }).join("") + "</table></div>";
+      if (other) h += '<p class="muted units-say">' + (other === units.length ? "No unit here is in development, so none needs its Last Updated or Research status set." : "The grayed rows are not in development (operating, retired, mothballed and so on) and do not need their Last Updated or Research status set.") + "</p>";
+      return h;
+    }
+    // the units in status order: the five in-development statuses first, in their fixed order, then the other statuses alphabetically; within a status, as the export lists them
+    function unitsByStatus(units) {
+      function rank(u) { var i = DEV_STATUS.indexOf(statusKey(u.status)); return i >= 0 ? i : DEV_STATUS.length; }
+      return units.map(function (u, i) { return {u: u, i: i}; }).sort(function (a, b) {
+        var d = rank(a.u) - rank(b.u);
+        if (!d && rank(a.u) === DEV_STATUS.length) d = statusBase(a.u.status).toLowerCase().localeCompare(statusBase(b.u.status).toLowerCase());
+        return d || a.i - b.i;
+      }).map(function (x) { return x.u; });
     }
 
     // ---- items ----
@@ -451,10 +657,15 @@
       function row(n) { return '<span class="rown"' + tipAttrs("QC/Country checklist row " + n + (ROW_LABEL[n] ? ": " + ROW_LABEL[n] : "")) + ">row " + n + "</span>"; }
       function plantOf(o) { return plants()[o._p]; }
       // units: every unit a staged change touches, by what its decisions add up to
-      var units = {updated: [], open: [], none: []}, itemsOnly = [];
+      var units = {updated: [], open: [], none: []}, itemsOnly = [], seen = {};
       plants().forEach(function (p) {
         if (p.statewide || untracked(p)) return;
-        if (!p.lines.length && p.items.length) { itemsOnly.push(p); return; }
+        // a plant with a watch card or an addition card but no edits card: items only, listed once per plant
+        if (!p.lines.length && p.items.length) {
+          var id = plantId(p);
+          if (!BY_PLANT[id] || BY_PLANT[id].plant == null) { if (!seen[id]) { seen[id] = 1; itemsOnly.push(p); } }
+          return;
+        }
         p.units.forEach(function (u) {
           var ls = p.lines.filter(function (l) { return lineUnit(l) === u.gem_unit_id || (lineUnit(l) === "" && l.kind === "plant"); });
           if (!ls.length) return;
@@ -471,14 +682,21 @@
         return '<details class="colist"' + (list.length <= 12 ? " open" : "") + "><summary>" + esc(title) + ' <span class="n">(' + list.length + ")</span></summary><p class=\"muted\">" + esc(say) + "</p><ul>" +
           list.map(function (e) { return "<li>" + unitLine(e) + "</li>"; }).join("") + "</ul></details>";
       }
+      function plantList(title, list, say) {
+        if (!list.length) return "";
+        return '<details class="colist"' + (list.length <= 12 ? " open" : "") + "><summary>" + esc(title) + ' <span class="n">(' + list.length + ")</span></summary><p class=\"muted\">" + esc(say) + "</p><ul>" +
+          list.map(function (p) { return "<li>" + esc(p.name) + ' <span class="n">(' + plural(p.units.length, "unit") + (lastUpdatedText(p) ? ", " + lastUpdatedText(p) : "") + ")</span></li>"; }).join("") + "</ul></details>";
+      }
       // the numbers behind the summary draft
       var c = {accept: 0, hold: 0, reject: 0, suggest: 0, undecided: 0};
       LINES.forEach(function (l) { c[dstate(l)]++; });
       var statusAcc = LINES.filter(function (l) { return l.column === "Status" && cur(l) === "accept" && l.kind !== "reverified"; });
       var newRows = LINES.filter(function (l) { return l.kind === "new_row" && cur(l) === "accept"; });
       var watchNew = ITEMS.filter(function (it) { return it.kind === "monitor" && it.monitor_kind === "new_to_tracker"; });
-      var watchOld = ITEMS.filter(function (it) { return it.kind === "monitor" && it.monitor_kind !== "new_to_tracker"; });
+      var watchOld = ITEMS.filter(function (it) { return it.kind === "monitor" && it.monitor_kind !== "new_to_tracker" && !isLead(it); });
+      var leads = ITEMS.filter(isLead);
       var promote = ITEMS.filter(function (it) { return it.kind === "monitor" && it.call === "add_to_database"; });
+      var moreResearch = ITEMS.filter(function (it) { return it.kind === "monitor" && it.call === "research_further"; });
       var toSheet = ITEMS.filter(function (it) { return it.kind === "monitor" && it.call === "possible_updates"; });
       var held = ITEMS.filter(function (it) { return it.kind === "monitor" && it.call === "hold"; });
       var entities = ITEMS.filter(function (it) { return it.kind === "entity"; });
@@ -490,15 +708,19 @@
       var irpTick = irpRecs.filter(function (o) { return o.kind !== "new_row" && irpBoxOf(o) === "no"; });
       var irpDone = irpRecs.filter(function (o) { return o.kind !== "new_row" && irpBoxOf(o) === "yes"; });
       var irpUnknown = irpRecs.filter(function (o) { return o.kind !== "new_row" && !irpBoxOf(o); });
-      var nPlants = plants().filter(function (p) { return !p.statewide && !untracked(p); }).length;
+      var nPlants = A.uniq(plants().filter(function (p) { return !p.statewide && !untracked(p); }).map(plantId)).length;
+      var tracked = trackedPlants(), noChange = tracked.filter(noChanges), checkedPlants = tracked.filter(plantChecked);
+      var ncChecked = noChange.filter(plantChecked), ncOpen = noChange.filter(function (p) { return !plantChecked(p); });
       var sentences = [];
-      sentences.push((quarter ? quarter.toUpperCase() + " " : "") + "GOGPT review of " + (where || "this scope") + ": " + plural(nPlants, "tracked plant") + " looked at.");
+      sentences.push((quarter ? quarter.toUpperCase() + " " : "") + "GOGPT review of " + (where || "this scope") + ": " + plural(nPlants, "tracked plant") + " on the page, " + checkedPlants.length + " checked" +
+        (noChange.length ? "; " + noChange.length + " had no suggested change, " + ncChecked.length + " of them marked checked" : "") + ".");
       sentences.push(plural(c.accept, "change") + " accepted, " + c.reject + " rejected, " + c.hold + " held, " + c.suggest + " sent back with a suggestion" + (c.undecided ? ", " + c.undecided + " not decided yet" : "") + ".");
       if (statusAcc.length) sentences.push("Status changes: " + statusAcc.map(function (l) {
         var p = plantOf(l), v = l.proposed_values && l.proposed_values.Status, from = l.current && l.current.Status;
         return p.name + (l.unit_name ? " " + l.unit_name : "") + (from ? " from " + from : "") + " to " + (v || "?");
       }).join("; ") + ".");
       if (newRows.length) sentences.push(plural(newRows.length, "new row") + " accepted for the database.");
+      if (leads.length) sentences.push(plural(leads.length, "lead") + " on new units or plants not ready to add" + (moreResearch.length ? "; " + moreResearch.length + " sent back for more research" : "") + ".");
       if (us && irpRecs.length) sentences.push(plural(irpRecs.length, "finding") + " from utility resource plans" + (irpTick.length ? "; IRP box to tick on " + plural(irpTick.length, "unit") : "") + ".");
       if (watchNew.length || watchOld.length) sentences.push("Watch list: " + watchNew.length + " new to the tracker and " + watchOld.length + " on existing plants" +
         (promote.length ? "; " + promote.length + " to be added to the database" : "") + (toSheet.length ? "; " + toSheet.length + " sent to the possible-updates sheet" : "") + ".");
@@ -519,6 +741,8 @@
         unitList("mark updated", units.updated, "at least one change on the unit was accepted") +
         unitList("still open: decide before marking", units.open, "the unit has changes that are undecided, held, or sent back with a suggestion") +
         unitList("mark no changes", units.none, "every change on the unit was rejected: the current values stand") +
+        plantList("no suggested changes, marked checked", ncChecked, "the batch proposed nothing for these plants and they were marked checked on this page: their Last Updated and Research status were set in the database by hand") +
+        plantList("no suggested changes, not checked yet", ncOpen, "the batch proposed nothing for these plants and nobody has marked them checked yet (or they are held for later)") +
         (itemsOnly.length ? '<details class="colist"><summary>plants with items only <span class="n">(' + itemsOnly.length + ")</span></summary><p class=\"muted\">no cell changes were staged, only questions or watch items; the research status is your call</p><ul>" +
           itemsOnly.map(function (p) { return "<li>" + esc(p.name) + ' <span class="n">(' + plural(p.items.length, "item") + ")</span></li>"; }).join("") + "</ul></details>" : "") +
         (units.updated.length || units.none.length ? '<p><button type="button" class="ghost" data-copy="units">copy the unit lists</button> <span class="muted">(plant, unit, GEM unit id; one per line)</span></p>' : "") +
@@ -579,17 +803,23 @@
         "Nothing here is in the GEM database yet, and nothing on this page can write to it. Your job is to say yes or no to each edit.</p>" +
         "<h4>what you see</h4>" +
         "<ul>" +
-        "<li><b>Left list:</b> the plants with something to decide. Click one to open it.</li>" +
-        "<li><b>Card:</b> that plant's proposed changes, one per cell, grouped by unit. Each change shows the cell as it is <b>now</b> and the <b>proposed</b> value, " +
-        "plus the source links that back it. A new link is <b>added next to</b> the links already in the Data Source cell. It never replaces one.</li>" +
+        "<li><b>Left list:</b> every plant in this scope, on three tabs. <b>Suggestions</b> holds everything the batch proposed for plants GEM tracks, in three sections. <b>Plants</b>: one card per tracked plant the batch proposes changes for, with its questions and owners to create. " +
+        "<b>Proposed additions</b>: one \"new units at\" card per tracked plant with new unit rows or leads. <b>Watch list</b>: one card per tracked plant with something to keep an eye on. " +
+        "<b>To check</b> holds the plants the batch proposed nothing for. Each shows one line, <b>no suggested changes</b>: look the plant over, set its Last Updated and Research status in the database, then mark it <b>checked</b> (or <b>hold for later</b>). That is how the page can say every plant was looked at. <b>New</b> holds one card per plant GEM does not track yet that the batch proposes adding. " +
+        "A plant can have a card in each section; the cards link to each other. Click a card to open it.</li>" +
+        "<li><b>Card:</b> a plant's proposed changes, one per cell, grouped by unit. Each change shows the cell as it is <b>now</b> and the <b>proposed</b> value, " +
+        "plus the source links that back it. A new link is <b>added next to</b> the links already in the Data Source cell. It never replaces one. " +
+        "An addition or watch card has no tabs: its rows and items are all on one page.</li>" +
+        "<li><b>Status filter:</b> the page opens on the plants <b>in development</b> (announced, pre-construction, construction, shelved and shelved-inferred) plus the plants new to the database, because the update is about them. " +
+        "Operating, retired, cancelled and the other statuses are off until you tick them under <b>other statuses</b> in the status menu; an <b>active filters</b> button in the filter bar shows when one is on; click it to see the filters and clear one.</li>" +
         "<li><b>Major / minor:</b> a <b>major change</b> moves a value: it fills a blank, changes or clears a value, sets a plant-wide field, or adds a row. " +
-        "A <b>minor change</b> means the value was checked again and stands, so only a source link is added. " +
-        "The card opens on the major changes; the minor ones have their own tab and an <b>accept all minor changes</b> button.</li>" +
+        "A <b>minor change</b> means the value stands and only a source link is added (the value was checked again, or the cell already has a link), or the edit is to Status Detail. " +
+        "The card opens on the major changes tab. The <b>+</b> next to it opens the <b>minor changes</b>, <b>items</b> and <b>everything</b> tabs, after a reminder that they are not an expected part of the regular update (<b>Show anyway</b> opens them, <b>OK, I understand</b> leaves them folded), and the <b>&minus;</b> folds them away again. A minor change carries a <b>minor</b> chip; major changes, the common case, carry none. A minor change loads as <b>held</b> and grayed out until you accept or reject it.</li>" +
         "<li><b>Color:</b> green means one fully checked source (a status change needs two independent publishers), yellow means one source or a partial match, and red means weak. " +
         "Green changes default to accept; the rest default to hold.</li>" +
         "<li><b>Plant-wide:</b> a plant-level field such as the location or the owner is repeated on every unit row, so one accept covers all of them.</li>" +
         "<li><b>Items</b> tab: questions the researcher raised, plants and projects to watch, and owners or operators to create. They take a call and a note, but they never change a cell.</li>" +
-        "<li><b>Checklist:</b> every change and item is sorted into one of the groups of the GOGPT QC/Country checklist (the \"checklist N\" chip; hover it for the rows it ticks). " +
+        "<li><b>Checklist:</b> every change and item is sorted into one of the groups of the GOGPT QC/Country checklist (the dashed chip with the group's name, such as \"status and timeline\"; hover it for the rows it ticks). " +
         "The <b>checklist</b> dropdown in the filters shows one group at a time, decided or not.</li>" +
         "</ul>" +
         "<h4>your four calls</h4>" +
@@ -599,19 +829,25 @@
         "<li><b>reject:</b> no, do not apply this.</li>" +
         "<li><b>suggest:</b> something else is right, so type the value or a note, and the source link if you have one. The researcher looks at it again; it does not go into the workbook as is.</li>" +
         "</ul>" +
+        "<p><b>A plant with no suggested changes</b> takes two calls instead: <b>checked</b> (you looked at it and set its Last Updated and Research status in the database) and <b>hold for later</b>.</p>" +
         "<p><b>Ask the PM:</b> a checkbox beside every change, every item and at the top of every plant. It sits beside your decision, so you can accept something and still flag it. " +
-        "Write the question in the box that appears. The <b>ask the PM</b> filter lists everything flagged; the evidence file gathers the questions in one place.</p>" +
-        "<h4>the four kinds of item</h4>" +
+        "Write the question in the box that appears. The evidence file gathers the questions in one place.</p>" +
+        "<h4>the five kinds of item</h4>" +
         "<ul>" +
         "<li><b>Question about existing data:</b> the researcher doubts something already in GEM: a value that could not be checked, two sources that disagree, a possible duplicate. " +
         "Calls: <b>confirmed</b> (the question stands and goes into the evidence file), <b>dismissed</b> (closed), <b>needs research</b> (back to the researcher).</li>" +
-        "<li><b>Watch item, new to the tracker:</b> a plant or project GEM does not track at all yet. It did not clear the bar for a new row (too early, too small, or thin on evidence), so it is on a watchlist instead.</li>" +
-        "<li><b>Watch item, existing plant:</b> something to keep an eye on at a plant GEM already tracks: a permit in progress, an expansion, a retirement date to confirm. The plant's row is not changed by the item.</li>" +
+        "<li><b>Watch item, new to the tracker:</b> a plant or project GEM does not track at all yet. It did not clear the bar for a new row (too early, too small, or thin on evidence), so it is on a watchlist instead. It sits under proposed additions.</li>" +
+        "<li><b>New unit lead</b> or <b>new plant lead:</b> the researcher found signs of a new unit or plant but not enough to write the row. It sits under proposed additions with a \"lead\" chip, beside the rows that are ready.</li>" +
+        "<li><b>Watch item, existing plant:</b> something to keep an eye on at a plant GEM already tracks: a permit in progress, an expansion, a retirement date to confirm. The plant's row is not changed by the item. It sits under the watch list.</li>" +
         "<li><b>New owner or operator to create:</b> a company that is not in GEM's entity list. Someone creates it in the GEM web form before the ownership edit can land.</li>" +
         "</ul>" +
+        "<p><b>A new row</b> is titled <b>New unit</b> (a unit row under a plant GEM already tracks; the right-hand side names the plant) or <b>New plant</b> (with its unit rows under it; one call covers them all). " +
+        "It carries one chip: <b>2 of 2 sources verified</b> means every source link on it was fetched and states a value on the page; <b>no source verified</b> means none was, so read the sources before accepting. " +
+        "A new row has no confidence, severity or checklist chip, because all three read the same on every new row.</p>" +
         "<p><b>IRP chip</b> (United States only): the finding comes from a utility integrated resource plan. The chip says whether the unit's IRP box in the database is already ticked; \"IRP: tick the box\" means it is not. The close-out panel lists them under row 37.</p>" +
-        "<p><b>Watch items take four calls</b> instead of accept and reject: <b>incorporate into database</b> (it belongs in GEM now; the researcher writes it up as a full edit for the next batch), " +
+        "<p><b>Watch items and leads take their own calls</b> instead of accept and reject: <b>incorporate into database</b> (it belongs in GEM now; the researcher writes it up as a full edit for the next batch), " +
         "<b>hold</b> (keep watching), <b>send to possible updates</b> (park it on the possible-updates sheet for a later cycle), and <b>remove from watchlist</b> (drop it, with a note saying why). " +
+        "A lead has one more: <b>research further</b> (it goes on the next batch's briefs for a closer look before anyone adds it). " +
         "A candidate staged in two batches shows an \"also staged in\" chip: decide it once and give the copy the same call.</p>" +
         "<h4>what happens when you accept</h4>" +
         "<ol>" +
@@ -627,6 +863,13 @@
         "</ul>";
     }
 
+    // the error text the database's validation report gave for a line or an item answering it
+    function verrBox(o) {
+      var errs = o.validation_errors || [];
+      if (!errs.length) return "";
+      return '<div class="verr"><span class="verr-h">The database\'s validation report says</span>' + errs.map(function (e) { return "<div>" + esc(e) + "</div>"; }).join("") + "</div>";
+    }
+
     return {
       name: "gogpt",
       cards_key: "plants",
@@ -635,48 +878,59 @@
       pidTip: "click to copy the GEM plant id",
       references: true,
       // the vocabularies: the built page's tracker block (TrackerConfig.page_block) wins for calls and note rules, so the watch-item calls stay in step with review_app/checklist.py WATCH_CALLS; these are the fallbacks
-      line_kinds: ["fill", "change", "delete", "plant", "reverified", "new_row"],
+      line_kinds: ["fill", "change", "delete", "plant", "reverified", "new_row", "checked"],
       item_kinds: ["concern", "monitor", "entity", "other"],
-      item_calls: TB.item_calls || {concern: ["confirmed", "dismissed", "needs_research"], monitor: ["add_to_database", "hold", "possible_updates", "remove"]},
+      item_calls: TB.item_calls || {concern: ["confirmed", "dismissed", "needs_research"], monitor: ["add_to_database", "hold", "possible_updates", "research_further", "remove"]},
       other_calls: TB.other_calls || ["noted", "todo", "dismissed"],
       note_required: TB.note_required || ["monitor:remove"],
+      // "research further" is a call on a lead only: a plain watch item never offers it
+      itemCalls: function (kind, it) {
+        if (kind !== "monitor" || isLead(it)) return null;
+        var all = (TB.item_calls && TB.item_calls.monitor) || ["add_to_database", "hold", "possible_updates", "research_further", "remove"];
+        return all.filter(function (c) { return c !== "research_further"; });
+      },
       kind_label: KIND_LABEL,
       kind_tip: KIND_TIP,
-      kindLabel: function (o, KL) { return o.kind === "monitor" ? (MONITOR_LABEL[o.monitor_kind] || KL.monitor) : (KL[o.kind] || o.kind); },
-      kindTip: function (o, KT) { return o.kind === "monitor" ? KT[o.monitor_kind] || "" : KT[o.kind] || ""; },
-      call_label: {add_to_database: "incorporate into database", hold: "hold", possible_updates: "send to possible updates", remove: "remove from watchlist", needs_research: "needs research"},
+      kindLabel: function (o, KL) { return o.kind === "monitor" ? (isLead(o) ? LEAD_LABEL[o.lead_for] : MONITOR_LABEL[o.monitor_kind] || KL.monitor) : (KL[o.kind] || o.kind); },
+      kindTip: function (o, KT) { return o.kind === "monitor" ? (isLead(o) ? KT.lead : KT[o.monitor_kind]) || "" : KT[o.kind] || ""; },
+      call_label: {add_to_database: "incorporate into database", hold: "hold", possible_updates: "send to possible updates", research_further: "research further", remove: "remove from watchlist", needs_research: "needs research"},
       call_help: {add_to_database: "this belongs in GEM now: the researcher turns it into a full edit (a new row or a change) for the next batch",
                   hold: "not sure yet, leave it on the watchlist", possible_updates: "goes on the possible-updates sheet for a later cycle",
+                  research_further: "worth a closer look before anyone adds it: the lead goes on the next batch's briefs",
                   remove: "take it off the watchlist for good; say why in the note"},
       call_hint: {concern: "confirmed: the concern stands and goes into the evidence file. dismissed: closed, nothing to do. needs research: back to the researcher for another pass",
-                  monitor: "incorporate into database: this belongs in GEM now, the researcher writes it up as a full edit. hold: keep watching. send to possible updates: park it on the possible-updates sheet for a later cycle. remove from watchlist: drop it, with a note saying why",
+                  monitor: "incorporate into database: this belongs in GEM now, the researcher writes it up as a full edit. hold: keep watching. send to possible updates: park it on the possible-updates sheet for a later cycle. research further (leads only): a closer look in the next batch before it is added. remove from watchlist: drop it, with a note saying why",
                   other: "noted: seen. todo: to do later. dismissed: closed"},
-      sev_tip: {major: "major change: a cell value moves. A blank is filled, a value is changed or cleared, a plant-wide field is set, or a row is added"},
+      sev_tip: {major: "major change: a cell value moves. A blank is filled, a value is changed or cleared, a plant-wide field is set, or a row is added",
+                minor: "minor change: the value stands and only a source link is added (it was checked again, or the cell already has a link), or the edit is to Status Detail"},
       tier_tip: TIER_TIP,
-      hideFields: ["gem_unit_id", "unit_name", "group", "group_label", "checks", "monitor_kind", "pm_flag", "pm_note", "pm_by", "duplicate_of", "concern_type_raw", "plant_name"],
+      hideFields: ["gem_unit_id", "unit_name", "group", "group_label", "checks", "monitor_kind", "lead_for", "pm_flag", "pm_note", "pm_by", "duplicate_of", "concern_type_raw", "plant_name", "validation_errors", "validation_fix", "proposed_value", "ready"],
       itemFacets: ["group"],
       store: {flag: "/api/flag"},
-      QK: {decision: "d", kind: "k", group: "g", tier: "t", dir: "dir", column: "col", q: "q", country: "c", state: "st", by: "by", status: "status", pm: "pm", captive: "cap"},
+      QK: {decision: "d", kind: "k", group: "g", tier: "t", dir: "dir", column: "col", q: "q", country: "c", state: "st", status: "sts", dc: "dc", by: "by", captive: "cap", pm: "pm"},
+      routeEmpty: "all",         // every status (or country, state) ticked is written as "all" in the address, since the status default is not empty
 
       slots: {
-        "filters": '<span id="f-country" class="countries" role="group" aria-label="country" hidden></span><span id="f-state" class="countries" role="group" aria-label="state" hidden></span>' +
-          '<label data-after="f-kind"><span data-tip="the group of the GOGPT QC/Country checklist every change and item is sorted into; pick one to see everything in it, decided or not">checklist</span> <select id="f-group"></select></label>' ,
-        "filters-more": '<label class="check" data-tip="plants whose Status is changed by a staged edit"><input type="checkbox" id="f-status"> status changes only</label>' +
-          '<label class="check" data-tip="everything flagged with the ask-the-PM box, whatever its decision"><input type="checkbox" id="f-pm"> ask the PM</label>'
+        "queue-pane": '<div id="qtabs" class="tabs qtabs" role="tablist" aria-label="queue"></div>',
+        "filters": '<span id="f-country" class="countries" role="group" aria-label="country" hidden></span><span id="f-state" class="countries" role="group" aria-label="state" hidden></span><span id="f-status" class="countries" role="group" aria-label="status" hidden></span>' +
+          '<label class="check" data-tip="only records flagged ask the PM: lines, items and whole plants. Decided ones are listed too"><input type="checkbox" id="f-pm"> ask the PM</label>' +
+          '<label class="check" data-tip="only plants with a related data center: a plant any of whose records ticks QC/Country checklist row 39 (gas-fired data centers, US only)"><input type="checkbox" id="f-dc"> data centers only</label>' +
+          '<label data-after="f-kind" id="f-group-label"><span data-tip="the group of the GOGPT QC/Country checklist every change and item is sorted into; pick one to see everything in it, decided or not">checklist</span> <select id="f-group"></select></label>'
       },
 
       // ---- filters ----
-      defaults: function () { return {group: "", country: [], state: [], status: false, pm: false, captive: false}; },
-      // items (questions, watch items, entity checks) sit beside the edits whenever a checklist group or the ask-the-PM filter is on
-      itemsInView: function (fs) { return !!(fs.group || fs.pm || fs.captive); },
+      defaults: function () { return {group: "", country: [], state: [], status: devDefault(), dc: false, captive: false, pm: false}; },
+      // items (questions, watch items, entity checks) sit beside the edits whenever a checklist group is on;
+      // on an addition or watch card the items ARE the card, so they stay in view whatever the filters say
+      itemsInView: function (fs, o, p) { return !!(fs.group || fs.captive || fs.pm || (p && cardKind(p) !== "plant")); },
       match: function (o, p, fs, skip) {
-        var item = !!o._item;
         if (skip !== "group" && fs.group && groupOf(o) !== fs.group) return false;
-        if (fs.pm && !flagged(o, p)) return false;
         if (fs.captive && !isCaptive(o)) return false;
-        if (fs.status && (item || o.column !== "Status")) return false;
         if (skip !== "country" && fs.country.length && fs.country.indexOf(p.country) < 0) return false;
         if (skip !== "state" && fs.state.length && fs.state.indexOf(p.state) < 0) return false;
+        if (fs.pm && !o.pm_flag && !(p && p.pm_flag)) return false;
+        if (fs.dc && !hasDataCenter(p)) return false;
+        if (skip !== "status" && fs.status.length && !statusOn(p, fs.status)) return false;
         return true;
       },
       tally: function (p) {
@@ -703,45 +957,119 @@
             if (!e.target.classList.contains("ctoggle")) return;
             e.stopPropagation();
             var on = Array.prototype.every.call(box.querySelectorAll("input[type=checkbox]"), function (i) { return i.checked; });
+            rememberStates();
+            var had = stateChoices().length > 0;
             FS()[field] = on ? [NO_COUNTRY] : [];
-            after(field);
+            after(field, had);
           };
           box.onchange = function () {
             var boxes = box.querySelectorAll("input[type=checkbox]"), sel = Array.prototype.filter.call(boxes, function (i) { return i.checked; }).map(function (i) { return i.value; });
+            rememberStates();
+            var had = stateChoices().length > 0;
             FS()[field] = sel.length === boxes.length ? [] : sel.length ? sel : [NO_COUNTRY];
-            after(field);
+            after(field, had);
           };
         }
         // changing the countries can take the state menu away: drop states that are no longer offered
-        function after(field) {
-          if (field === "country") { var ok = stateChoices(); FS().state = picked(FS().state).filter(function (st) { return ok.indexOf(st) >= 0; }); }
+        function after(field, had) {
+          if (field === "state") rememberStates();
+          if (field === "country") reconcileStates(had);
           A.changed();
         }
         menu("f-country", "country");
         menu("f-state", "state");
+        // the status menu: the group box ticks or unticks its statuses, the toggle button does every box in the menu; all ticked is the same as none ticked
+        var sbox = $("f-status");
+        function statusBoxes() { return Array.prototype.slice.call(document.querySelectorAll("#f-status input[value]:not(:disabled)")); }
+        function setStatus() {
+          var boxes = statusBoxes(), sel = boxes.filter(function (i) { return i.checked; }).map(function (i) { return i.value; });
+          FS().status = sel.length === boxes.length ? [] : sel.length ? sel : [NO_COUNTRY];
+          A.changed();
+        }
+        sbox.onclick = function (e) {
+          if (!e.target.classList.contains("ctoggle")) return;
+          e.stopPropagation();
+          var boxes = statusBoxes(), allOn = boxes.every(function (i) { return i.checked; });
+          boxes.forEach(function (i) { i.checked = !allOn; });
+          setStatus();
+        };
+        // ticking a status outside in development (the "other statuses" box or one of its statuses) changes nothing until the researcher clicks "Show anyway"; "OK, I understand" or closing the popup leaves the filter as it was
+        function confirmOther(redo) {
+          var dlg = $("dialog");
+          dlg.setAttribute("data-kind", "info");
+          dlg.innerHTML = "<h3>other statuses</h3><p><b>NOTE:</b> Checking statuses that aren't explicitly in development is not an expected part of the regular update.</p>" +
+            '<div class="actions"><button type="button" class="dlg-alt" id="dlg-show">Show anyway</button><button type="button" class="dlg-ok" id="dlg-ok">OK, I understand</button></div>';
+          $("dlg-ok").onclick = function () { dlg.close(); };
+          $("dlg-show").onclick = function () { dlg.close(); redo(); };
+          dlg.showModal();
+        }
+        // tick the group box or the one status, and the statuses under the group, then filter
+        function tickStatus(group, value) {
+          var t = group ? sbox.querySelector('input[data-group="' + group + '"]') : Array.prototype.filter.call(sbox.querySelectorAll("input[value]"), function (i) { return i.value === value; })[0];
+          if (!t || t.disabled) return;
+          t.checked = true;
+          if (group) Array.prototype.forEach.call(sbox.querySelectorAll("input[value]:not(:disabled)"), function (i) { if (i.value !== NEW_STATUS && isDev(i.value) === (group === "dev")) i.checked = true; });
+          setStatus();
+        }
+        sbox.onchange = function (e) {
+          var g = e.target.getAttribute("data-group"), v = e.target.value;
+          var other = g ? g === "rest" : v && v !== NEW_STATUS && !isDev(v);
+          if (other && e.target.checked) {
+            renderStatus();     // the tick is not applied: draw the menu from the filter as it still is
+            confirmOther(function () { tickStatus(g, v); });
+            return;
+          }
+          if (g) Array.prototype.forEach.call(sbox.querySelectorAll("input[value]:not(:disabled)"), function (i) { if (i.value !== NEW_STATUS && isDev(i.value) === (g === "dev")) i.checked = e.target.checked; });
+          setStatus();
+        };
+        $("f-dc").onchange = function () { FS().dc = this.checked; A.changed(); };
+        // flagged records are often already decided, so ticking the box lifts the undecided-only default
+        $("f-pm").onchange = function () { FS().pm = this.checked; if (this.checked) FS().decision = ""; A.changed(); };
+        // the ask the PM and data center boxes sit after the search bar, just before the more filters button group (not inside it)
+        var fm = $("f-more"); fm = fm.closest(".fbtns") || fm; fm.parentNode.insertBefore($("f-pm").closest("label"), fm); fm.parentNode.insertBefore($("f-dc").closest("label"), fm);
+        // kind and checklist sit with the other less-used filters
+        var more = $("more-filters"), first = more.firstElementChild;
+        [$("f-kind").closest("label"), $("f-group-label")].forEach(function (l) { if (l) more.insertBefore(l, first); });
         document.addEventListener("click", function (e) {
-          Array.prototype.forEach.call(document.querySelectorAll("#f-country details, #f-state details"), function (d) { if (d.open && !d.contains(e.target)) d.open = false; });
+          Array.prototype.forEach.call(document.querySelectorAll("#f-country details, #f-state details, #f-status details"), function (d) { if (d.open && !d.contains(e.target)) d.open = false; });
         });
-        $("f-status").onchange = function () { FS().status = this.checked; A.changed(); };
-        // "ask the PM" matches flagged lines and items whatever their decision: drop the undecided-only default
-        $("f-pm").onchange = function () { FS().pm = this.checked; if (FS().pm && FS().decision === "undecided") FS().decision = ""; A.changed(); };
       },
       syncControls: function () {
         var fs = FS();
+        $("f-dc").checked = !!fs.dc;
+        $("f-pm").checked = !!fs.pm;
         // a route from before the where buttons (several ticked states) or for a place not on the page falls back to the whole page
         if (!whereValid()) { fs.country = []; fs.state = []; }
-        $("f-status").checked = fs.status;
-        $("f-pm").checked = fs.pm;
       },
       activeChips: function (chipFn, when) {
         var fs = FS();
         if (when === "before") {
-          if (fs.group) chipFn("group", "checklist: " + groupLabel(fs.group), false);
-          if (fs.pm) chipFn("pm", "ask the PM", false);
+          // the status filter differs from its default (in development plus new to database): a chip says how
+          var sel = fs.status || [];
+          if (!isDefaultStatus(sel)) {
+            var text, rest = sel.filter(function (x) { return x !== NO_COUNTRY && x !== NEW_STATUS && !isDev(x); });
+            if (!sel.length) text = "status: all";
+            else if (sel.length === 1 && sel[0] === NO_COUNTRY) text = "status: none";
+            else {
+              var dev = sel.filter(isDev), parts = [];
+              if (dev.length === DEV_LABEL.length) parts.push("in development"); else parts = parts.concat(dev.map(statusBase));
+              parts = parts.concat(rest);
+              if (sel.indexOf(NEW_STATUS) >= 0) parts.push(NEW_STATUS);
+              text = "status: " + parts.join(", ");
+            }
+            chipFn("status", text, false);
+          }
+          if (fs.kind) chipFn("kind", "kind: " + (KIND_LABEL[fs.kind] || fs.kind), true);
+          if (fs.group) chipFn("group", "checklist: " + groupLabel(fs.group), true);
+          if (fs.pm) chipFn("pm", "flagged ask the PM", false);
+          if (fs.dc) chipFn("dc", "plants with data centers", false);
           if (fs.captive) chipFn("captive", "captive power (rows " + CAPTIVE_ROWS.join(", ") + ")", false);
-        } else if (fs.status) chipFn("status", "status changes only", true);
+        }
       },
-      progressNote: function () { var pm = pmCount(); return pm ? " &middot; " + pm + " flagged for the PM" : ""; },
+      progressNote: function () {
+        var pm = pmCount(), tracked = trackedPlants(), done = tracked.filter(plantChecked).length;
+        return (tracked.length ? " &middot; " + done + " of " + plural(tracked.length, "plant") + " checked" : "") + (pm ? " &middot; " + pm + " flagged for the PM" : "");
+      },
       progressHtml: function () {
         var gs = groupStats();
         return '<h4>by checklist group</h4><table class="sumtab"><tr><th>group</th><th>open</th><th>total</th></tr>' +
@@ -754,22 +1082,48 @@
       // ---- derived data ----
       onReload: function (data) {
         ROW_LABEL = {};
+        BY_PLANT = {};
         (data.groups || []).forEach(function (g) { (g.rows || []).forEach(function (r) { ROW_LABEL[r.row] = r.label; }); });
       },
-      prepare: function (p) {
+      prepare: function (p, i) {
         p.units = p.units || [];
-        p._hay = [p.name, p.pid, p.state].concat(p.units.map(function (u) { return u.gem_unit_id + " " + u.unit_name; })).join(" ").toLowerCase();
+        var id = plantId(p);
+        if (id && !p.statewide) (BY_PLANT[id] = BY_PLANT[id] || {})[cardKind(p)] = i;
+        p._hay = [p.name, p.pid, id, p.state].concat(p.units.map(function (u) { return u.gem_unit_id + " " + u.unit_name; })).join(" ").toLowerCase();
+        // a minor change nobody has decided loads as held (grayed out): a page default, not a saved record, so a person's call replaces it
+        p.lines.forEach(function (l) {
+          if (A.sevOf(l) !== "minor" || cur(l)) return;
+          l.decision = "hold"; l.reviewed = true; l.decided_by = null; l.decided_at = null; l._autohold = true;
+        });
       },
 
       // ---- the queue and the checklist pane ----
-      renderQueue: function () { if (VIEW !== "checklist") return false; renderChecklist(); return true; },
+      renderQueue: function () { renderQtabs(); if (VIEW !== "checklist") return false; renderChecklist(); return true; },
+      // the queue lists one tab at a time; opening a card from the other tab (a link, j / k never cross) switches to it
+      queueShows: function (p) { return qtabOf(p) === QTAB; },
+      beforeSelect: function (p) { if (!p || qtabOf(p) === QTAB) return false; setQtab(qtabOf(p)); return true; },
+      hideItemsSwitch: false,
+      hideDoneInFilters: true,
+      // a header before the first card of each section, with how many of its cards the pane shows
+      queueSection: function (p, prev, shown) {
+        var k = cardKind(p);
+        if (prev && cardKind(prev) === k) return "";
+        var n = shown.filter(function (x) { return cardKind(x) === k; }).length;
+        return '<span' + tipAttrs(SECTION_TIP[k]) + ">" + esc(SECTION[k]) + '</span> <span class="n">' + n + "</span>";
+      },
       queueRow: function (p, i, x) {
         var pm = p._pm ? ' <span class="pm"' + tipAttrs(p._pm + " question" + (p._pm === 1 ? "" : "s") + " for the PM on this plant") + ">PM " + p._pm + "</span>" : "";
-        var un = unitNames(p);
-        var where = p.statewide ? "statewide" : (p.units.length + " unit" + (p.units.length === 1 ? "" : "s"));
+        var un = unitNames(p), k = cardKind(p);
+        if (noChanges(p)) {       // a plant with nothing proposed: to check, checked, or held for later
+          var d = cur(p.lines[0]);
+          x.badge = d === "accept" ? '<span class="n">checked</span>' : d === "hold" ? '<span class="n todo">held for later</span>' : '<span class="n todo">to check</span>';
+        }
+        var where = p.statewide ? "statewide" : k === "watch" ? "watch" :
+          k === "addition" ? (untracked(p) ? "new plant" : plural(p.lines.length, "new unit") + (p.items.length ? ", " + plural(p.items.length, "lead") : "")) :
+          (p.units.length + " unit" + (p.units.length === 1 ? "" : "s"));
         return '<div class="pname">' + esc(p.name || "(no name)") +
-          (un.length ? ' <span class="pseg">' + esc(un[0]) + (un.length > 1 ? " +" + (un.length - 1) : "") + "</span>" : "") + pm +
-          '</div><div class="pmeta"><span>' + esc(p.statewide ? p.state : (untracked(p) ? "not in GEM yet" : p.pid)) + " &middot; " + esc(where) +
+          (un.length && k === "plant" ? ' <span class="pseg">' + esc(un[0]) + (un.length > 1 ? " +" + (un.length - 1) : "") + "</span>" : "") + pm +
+          '</div><div class="pmeta"><span>' + esc(p.statewide ? p.state : (untracked(p) ? "not in GEM yet" : plantId(p))) + " &middot; " + esc(where) +
           '</span><span class="grow"></span>' + x.badge + '</div>' + (x.dots ? '<div class="dots">' + x.dots + "</div>" : "");
       },
       onQueueClick: function (e) {
@@ -781,7 +1135,8 @@
       // ---- lines ----
       lineBody: function (l) {
         if (l.kind === "new_row") return newRowBody(l);
-        var h = A.pairTable(A.valueRows(l) + siblingRow(l) + A.refRow(l));
+        if (l.kind === "checked") return checkedBody(l);
+        var h = verrBox(l) + A.pairTable(A.valueRows(l) + siblingRow(l) + A.refRow(l));
         var facts = [];
         if (l.column === "Status") {
           if ((l.publishers || 0) < 2) facts.push(chip("single source", "single", "fewer than two independent publishers: a status change is green only with two or more. One source makes it yellow"));
@@ -793,20 +1148,51 @@
       },
       lineChips: function (l, base) {
         var chips = [];
-        if (l.kind === "new_row") chips.push(chip(A.KIND_LABEL.new_row, "newrow"));
+        if (l.kind === "checked") {        // no confidence or severity chip: there is no proposed value to rate
+          chips.push(chip("no suggested changes", "oo", "the research batch found nothing to change on this plant. Mark it checked once you have looked it over and set its Last Updated and Research status in the database"));
+          base = [];
+        }
+        if (l.kind === "new_row") {        // the title says new unit or new plant; one chip counts the verified sources. No confidence, severity or checklist chip: all three read the same on every new row
+          chips.push(readinessChip(l));
+          base = [];
+        }
         if (l.kind === "plant") chips.push(chip("plant-wide", "oo", "a plant-level field: the export repeats it on every unit row, so the edit lands on every unit row of this plant"));
+        if (l.validation_fix) chips.push(chip("validation fix", "oo", "an answer to the database's validation report that carries a value and a source: accept it to type the value into the web form"));
         chips = chips.concat(base);
         if (l.location && l.location.needs_review) chips.push(chip("needs a second look", "single", "the researcher was not sure of this point: check it against the satellite picture before accepting"));
-        chips.push(groupChip(l));
+        if (l.kind !== "new_row") chips.push(groupChip(l));
         if (l.irp) chips.push(irpChip(l));
         if (l.pm_flag) chips.push(pmChip(l));
         return chips;
       },
+      columnNoun: "attribute",
+      actionLabel: "what to change",
+      hideRecord: true,
+      columnKey: function (c) { return /^(Latitude|Longitude|Location accuracy|City|Local area \(taluk, county\)|Major area \(prefecture, district\))$/.test(c) ? "Latitude" : c; },
+      columnText: function (c) { return c === "Latitude" ? "Location" : c; },
       lineTitle: function (l) {
         var pv = l.proposed_values || {};
-        return l.kind === "new_row" ? (pv["Plant name"] || pv["Unit name"] || l.unit_name || l.plant_name || "new row") : (l.column || "");
+        if (l.kind === "checked") return "No suggested changes";
+        if (l.location) return "Location";
+        if (l.kind === "new_row") {        // "New unit: CT31-1", "New plant: Gowanus repowering (3 units)"
+          var n = (l.units || []).length;
+          return (newUnit(l) ? "New unit: " + (pv["Unit name"] || l.unit_name || pv["Plant name"] || l.plant_name || "(unnamed)")
+                             : "New plant: " + (pv["Plant name"] || l.plant_name || pv["Unit name"] || l.unit_name || "(unnamed)")) +
+            (n ? " (" + n + " unit" + (n === 1 ? "" : "s") + ")" : "");
+        }
+        return l.column || "";
       },
-      lineWhere: rowLabel,
+      lineWhere: function (l) { return l.kind === "checked" ? "" : rowLabel(l); },
+      // a "checked" line offers checked and hold for later instead of accept / hold / reject, and no suggest form
+      lineActions: function (l) {
+        if (l.kind !== "checked") return null;
+        return {buttons: [["accept", "checked", "I looked at this plant and set its Last Updated and Research status in the database"], ["hold", "hold for later", "come back to this plant later"]], suggest: false};
+      },
+      decisionText: function (l) {
+        if (l._autohold && cur(l) === "hold" && !l.decided_by) return "held by default: a minor change. Accept or reject it to decide it";
+        if (l.kind !== "checked" || !cur(l)) return null;
+        return (cur(l) === "accept" ? "checked by " : "held for later by ") + (l.decided_by || "?") + " " + A.timeOf(l.decided_at) + (blankv(l.decision_note) ? "" : ". " + l.decision_note);
+      },
       lineControls: function (l) { return pmBox(l, "data-pm", l.key); },
       lineClass: function (l) { return l.kind === "new_row" ? " newcard" : ""; },
       firstRef: function (l) {
@@ -834,17 +1220,26 @@
       itemHead: function (it) {
         switch (it.kind) {
           case "concern": return concernHead(it);
-          case "monitor": return (it.reason || it.item || "watch this plant") + (it.recheck_by ? " (check again by " + it.recheck_by + ")" : "");
+          // the recheck date is bookkeeping for the next batch, not for the reviewer; it stays out of the page
+          case "monitor": return it.reason || it.item || "watch this plant";
           case "entity": return (it.entity_name || "entity") + (it.role ? " as " + it.role : "");
           default: return it.title || it.kind;
         }
       },
       itemWhere: function (it) { return it.gem_unit_id ? unitText(unitOf(plants()[it._p], it.gem_unit_id), it.gem_unit_id) : "plant"; },
-      itemClass: function (it) { return it.kind === "monitor" ? " watch-" + (it.monitor_kind || "existing_plant") : ""; },
+      itemClass: function (it) { return it.kind === "monitor" ? " watch-" + (it.monitor_kind || "existing_plant") + (isLead(it) ? " lead" : "") : ""; },
       kindClass: function (it) { return it.kind === "monitor" ? "watch" : ""; },
-      itemChips: function (it) { return groupChip(it) + (it.irp ? " " + irpChip(it) : "") + (it.pm_flag ? " " + pmChip(it) : ""); },
+      itemChips: function (it) {
+        return (isLead(it) ? chip("lead", "lead", "not enough yet to write the row; research further puts it on the next batch's briefs") + " " : "") +
+          groupChip(it) + (it.irp ? " " + irpChip(it) : "") + (it.pm_flag ? " " + pmChip(it) : "");
+      },
       itemFacts: function (it) {
-        if (it.kind !== "monitor") return "";
+        if (it.kind !== "monitor") {
+          var h = verrBox(it);
+          var pv = it.kind === "concern" && (it.validation_errors || []).length ? Object.keys(it.proposed_value || {}).filter(function (k) { return String(it.proposed_value[k] || "").trim(); }) : [];
+          if (pv.length) h += '<div class="facts">' + pv.map(function (k) { return chip((k === "value" ? "" : k + ": ") + it.proposed_value[k], "single", "the researcher suggested this value without a source for it, so it is a question, not an edit"); }).join(" ") + "</div>";
+          return h;
+        }
         var facts = [];
         if (it.capacity_mw) facts.push(chip(it.capacity_mw + " MW"));
         if (it.status) facts.push(chip(it.status));
@@ -861,26 +1256,47 @@
       itemGroup: {
         of: groupOf,
         order: function () { return (D().groups || []).map(function (g) { return String(g.id); }); },
-        label: function (g) { return (g === "other" ? "" : "checklist " + g + ": ") + groupLabel(g); }
+        label: function (g) { return groupLabel(g); }        // the group's words, as on the chips
       },
 
       // ---- the card ----
       cardContext: function (p) {
-        var dbId = !p.statewide && !untracked(p) && /^[A-Za-z]?(\d+)$/.exec(String(p.pid || ""));
+        var k = cardKind(p);
+        var dbId = !p.statewide && !untracked(p) && /^[A-Za-z]?(\d+)$/.exec(plantId(p));
+        // the plant's other cards, as links: "plant edits", "2 proposed units", "watch"
+        var links = siblings(p).map(function (s) {
+          var c = s.card, text = s.kind === "plant" ? "plant edits" : s.kind === "watch" ? "watch list" :
+            plural(c.lines.length, "proposed unit") + (c.items.length ? " and " + plural(c.items.length, "lead") : "");
+          return '<a href="#" data-card="' + s.index + '"' + tipAttrs("open this plant's " + SECTION[s.kind] + " card") + ">" + esc(text) + " &rarr;</a>";
+        });
         return [dbId && '<a href="https://gem-project-db.herokuapp.com/projects/edit/' + dbId[1] + '" target="_blank" rel="noopener"' + tipAttrs("open this plant in the GEM project database") + ">project db ↗</a>",
-                /^https?:\/\//.test(p.wiki || "") && '<a href="' + esc(p.wiki) + '" target="_blank" rel="noopener"' + tipAttrs("open this plant's page on the GEM wiki") + ">wiki ↗</a>", p.statewide && "<b>statewide notes, not one plant</b>", untracked(p) && !p.statewide && "<b>not in GEM yet: a candidate plant</b>",
-                p.state && esc(p.state), p.units.length && p.units.length + " unit" + (p.units.length === 1 ? "" : "s") + " in the export",
-                A.tierSummary(p), '<span class="pmplant">' + pmBox(p, "data-pmplant", p.pid) + "</span>"];
+                /^https?:\/\//.test(p.wiki || "") && '<a href="' + esc(p.wiki) + '" target="_blank" rel="noopener"' + tipAttrs("open this plant's page on the GEM wiki") + ">wiki ↗</a>",
+                p.statewide && "<b>statewide notes, not one plant</b>", untracked(p) && !p.statewide && "<b>not in GEM yet: a candidate plant</b>",
+                !untracked(p) && k === "addition" && "<b>new units proposed at this plant</b>", k === "watch" && "<b>watch list: nothing here changes a cell</b>",
+                p.state && esc(p.state), k === "plant" && p.units.length && plural(p.units.length, "unit"),
+                k === "plant" && unitStatusText(p), k === "plant" && unitCapacityText(p),
+                noChanges(p) && "<b>no suggested changes</b>",
+                k !== "watch" && !noChanges(p) && A.tierSummary(p), links.length && '<span class="xcards">' + links.join(" ") + "</span>",
+                ];
       },
       cardSub: function (p) {
+        if (cardKind(p) !== "plant") return "";
         var un = unitNames(p);
         return un.length > 4 ? un.slice(0, 3).join(" / ") + " / +" + (un.length - 3) : un.join(" / ");
       },
       showPid: function (p) { return !(p.statewide || untracked(p)); },
+      pidText: plantId,
+      // an addition or watch card, or a plant with no suggested changes, has no tabs: its rows, then its items, on one page
+      flatCard: function (p) { return cardKind(p) !== "plant" || noChanges(p); },
+      collapseTabs: true,      // a plant card shows its major changes tab; + opens minor changes, items and everything
+      tabFoldNotice: "NOTE: These minor and additional changes are not an expected part of the regular update.",
+      bulkButtons: function () { return ""; },     // no bulk accept for now: every change is decided one at a time
       cardPanel: function (name) { return name === "closeout" ? closeoutHtml() : ""; },
       onCardClick: function (e) {
         var cp = e.target.closest("button[data-copy]");
         if (cp) { var what = cp.getAttribute("data-copy"); A.copyText(closeoutCopy[what] || "", what === "draft" ? "draft copied" : "unit lists copied"); return true; }
+        var xc = e.target.closest("a[data-card]");
+        if (xc) { e.preventDefault(); A.selectPipe(+xc.getAttribute("data-card")); return true; }
         return !!e.target.closest(".pmbox, .pmnote");       // the ask-the-PM box saves on change, not on click
       },
       onCardChange: onPmChange,
@@ -898,6 +1314,7 @@
       onBoot: function (data) {
         renderScope();
         setView("plants");        // no checklist tab on the left bar any more
+        $("qtabs").addEventListener("click", onQtabClick);
       },
       afterReload: function () { renderScope(); }
     };

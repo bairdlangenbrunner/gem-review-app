@@ -366,7 +366,7 @@
       var nowH, t = "", same = false;
       if (!has || (!blankv(was) && String(was).trim() === String(now).trim())) { nowH = wasH; same = true; }
       else if (blankv(now)) { nowH = '<span class="newv c-' + tierOf(l) + '">(clear)</span>'; t = "clear"; }
-      else { t = blankv(was) ? "fill" : "change"; nowH = '<span class="newv c-' + tierOf(l) + '">' + esc(now) + "</span>" + copyBtn(now); }
+      else { t = blankv(was) ? "fill" : "change"; nowH = A.newvHtml(was, now, "c-" + tierOf(l)) + copyBtn(now); }
       var r = '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";
       if (c in p._cont) { var cn = concernNote(p, c, l); if (cn) r += '<tr class="note"><td></td><td colspan="3">' + cn + "</td></tr>"; }
       if (has) r += rivalRows(l, c);
@@ -508,14 +508,7 @@
           esc(A.KIND_LABEL[c.kind] || c.kind) + " · " + esc(c.class_out || "?") + (c.dir !== l.dir ? " · " + esc(origDir(c.dir)) : "") +
           (c.tier && c.tier !== l.tier ? " · its confidence " + esc(c.tier) : "") + "); its refs are in the table</div>");
       });
-      var misc = ["batch " + origDir(l.dir), "class " + (l.class_in || "?") + " → " + (l.class_out || "?"),
-                  "default " + (l["default"] || "hold"),
-                  "link live: " + (l.link_live == null ? "unknown" : l.link_live)];
-      if (l.source_language) misc.push("lang " + l.source_language);
-      if (l.also_in && l.also_in.length) misc.push("also in " + l.also_in.map(origDir).join(", "));
-      if (l.kind === "oo") misc.push("owners tab row " + l.sheet_row + (l.tracker_sheet_row ? ", tracker row " + l.tracker_sheet_row : ""));
-      d.push('<div class="dtxt"><span class="k">record:</span> ' + esc(misc.join(" · ")) + "</div>");
-      return '<details data-more><summary>' + (l.provenance ? "how this route was made, notes &amp; record" : "notes &amp; record") + '</summary>' + d.join("") + "</details>";
+      return '<details data-more><summary>' + (l.provenance ? "how this route was made, notes" : "notes") + '</summary>' + d.join("") + "</details>";
     }
     // "major · fill", "major · status, change", "minor · refs only", "minor · re-verified"
     function sevChip(l) {
@@ -811,12 +804,6 @@
       },
 
       onInit: function () {
-        // the second filter row of the original page: "more filters" and "reset"
-        var first = document.querySelector(".filters .row2"), r2 = document.createElement("div");
-        r2.className = "row2";
-        r2.appendChild($("f-more"));
-        r2.appendChild($("f-reset"));
-        first.parentNode.insertBefore(r2, first.nextSibling);
         // the loopback server's refresh and push routes; the Google page and the single-file page bring their own (or none)
         var St = A.Store;
         if (!window.GasStore && !window.StaticStore && St._json) {

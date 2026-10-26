@@ -1,9 +1,9 @@
 """
 The GOGPT review config: every decision is a call on one staged record (its stable `record_id`, written by the gogpt-researcher repo's scripts/assemble_state.py).
 
-Line kinds: fill (a blank cell gets a value), change (a value is replaced), reverified (the current value was checked and stands, new Data Source link only), delete (a value is cleared), plant (a plant-level change applied to every unit row), new_row (a new unit or plant).
+Line kinds: fill (a blank cell gets a value), change (a value is replaced), reverified (the current value was checked and stands, new Data Source link only), delete (a value is cleared), plant (a plant-level change applied to every unit row), new_row (a new unit or plant), checked (a plant the batch proposed nothing for: the researcher marks it checked once they have looked at it and set its Last Updated and Research status in the database).
 
-Item kinds and their calls: a concern (qa lane) is confirmed, dismissed or sent back for more research. A watch item (monitor lane) is added to the database, held, sent to the possible-updates sheet, or removed from the watchlist; removing needs a note saying why. Everything else is noted, todo or dismissed. Items never write a cell.
+Item kinds and their calls: a concern (qa lane) is confirmed, dismissed or sent back for more research. A watch item (monitor lane) is added to the database, held, sent to the possible-updates sheet, or removed from the watchlist; removing needs a note saying why. A lead (a watch item that started as a new-row record too thin to stage, `lead_for` = newunits | newplants) can also be sent for more research, which puts it on the next batch's briefs. Everything else is noted, todo or dismissed. Items never write a cell.
 
 An ask-the-PM flag is a marker: {key: "pm::" + line or item key, or "pm::" + dir + "::plant:" + pid, flag: "pm", on, note}. It sits beside a decision and never replaces it, so one line can be accepted and flagged.
 
@@ -13,9 +13,11 @@ from pathlib import Path
 
 from review_core.config import TrackerConfig
 
-# `remove` makes assemble_state.py drop the candidate if a later sweep proposes it again.
-WATCH_CALLS = ("add_to_database", "hold", "possible_updates", "remove")
-LINE_KINDS = ("fill", "change", "reverified", "delete", "plant", "new_row")
+# `remove` makes assemble_state.py drop the candidate if a later sweep proposes it again;
+# `research_further` (leads only, the page offers it on nothing else) puts the lead on the
+# next batch's briefs through build_state_brief.py --promote.
+WATCH_CALLS = ("add_to_database", "hold", "possible_updates", "research_further", "remove")
+LINE_KINDS = ("fill", "change", "reverified", "delete", "plant", "new_row", "checked")
 ITEM_KINDS = ("concern", "monitor", "entity", "other")
 CONCERN_CALLS = ("confirmed", "dismissed", "needs_research")
 OTHER_CALLS = ("noted", "todo", "dismissed")

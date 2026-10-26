@@ -14,13 +14,13 @@
   <span id="scope" class="scope"></span>
   <div class="who"><span id="whoami"></span>
     <span class="slot" data-slot="header-buttons"></span>
-    <select id="theme-pick" aria-label="color theme">
-      <option value="">default</option><option value="solarized">solarized</option><option value="nord">nord</option>
-      <option value="gruvbox">gruvbox</option><option value="dracula">dracula</option><option value="sepia">sepia</option>
-    </select>
+    <details class="cdrop" id="theme-pick"><summary aria-label="color theme">theme</summary><div class="cmenu" role="menu">
+      <button type="button" data-pal="">default</button><button type="button" data-pal="solarized">solarized</button><button type="button" data-pal="nord">nord</button>
+      <button type="button" data-pal="gruvbox">gruvbox</button><button type="button" data-pal="dracula">dracula</button><button type="button" data-pal="sepia">sepia</button>
+    </div></details>
     <button id="theme" class="ghost" aria-label="toggle light / dark">&#9680;</button>
-    <button id="export-btn" class="ghost" aria-label="download decisions" hidden>download decisions</button>
-    <button id="progress-btn" class="ghost" aria-label="progress">progress</button>
+    <button id="export-btn" class="ghost parked" aria-label="download decisions" hidden>download decisions</button>
+    <button id="progress-btn" class="ghost parked" aria-label="progress">progress</button>
     <button id="info-btn" class="ghost" aria-label="how this works">how to</button>
     <button id="help-btn" class="ghost" aria-label="keyboard shortcuts">?</button>
   </div>
@@ -35,14 +35,17 @@
       <span class="slot" data-slot="filters"></span>
       <label>decision <select id="f-decision"></select></label>
       <label>kind <select id="f-kind"></select></label>
-      <label>confidence <select id="f-tier"></select></label>
       <label class="grow">search <input type="search" id="f-q" placeholder="name / id"></label>
-      <button type="button" id="f-more" class="ghost" aria-expanded="false" aria-controls="more-filters">more filters</button>
-      <button type="button" id="f-reset" class="ghost">reset</button>
+      <span class="fbtns">
+        <button type="button" id="f-more" class="ghost" aria-expanded="false" aria-controls="more-filters">more filters</button>
+        <button type="button" id="f-active" class="ghost" aria-expanded="false" aria-controls="active-filters" hidden>active filters</button>
+        <button type="button" id="f-reset" class="ghost">reset</button>
+      </span>
     </div>
     <div id="more-filters" class="more-filters" hidden>
-      <label>column <select id="f-column"><option value="">any</option></select></label>
+      <label><span id="f-column-label">column</span> <select id="f-column"><option value="">any</option></select></label>
       <label>batch <select id="f-dir"><option value="">any</option></select></label>
+      <label>confidence <select id="f-tier"></select></label>
       <label>decided by <select id="f-by"><option value="">anyone</option></select></label>
       <span class="slot" data-slot="filters-more"></span>
     </div>

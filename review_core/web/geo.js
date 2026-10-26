@@ -6,13 +6,24 @@
   var LEAFLET_SRI = "sha512-BwHfrr4c9kmRkLw6iXFdzcdWV/PGkVgiIyIWLLlTSXzWQzxuSg4DiQUCpauz/EWjgk5TYQqX/kvn9pG1NpYfqg==";
   var LOAD_MS = 15000;
   var PREF_KEY = "review-basemap";
-  // both from Esri, keyless; OpenStreetMap's own tiles are not used (their usage policy excludes this kind of app) and CARTO's now want an API key (2026-10-21)
+  // all from Esri, keyless; OpenStreetMap's own tiles are not used (their usage policy excludes this kind of app) and CARTO's now want an API key (2026-10-21).
+  // overlays are label layers drawn over the base: hybrid puts boundaries, places and roads on the imagery, gray puts its own labels on a muted base so the route stands out
+  var ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+  function esri(s) { return ESRI + s + "/MapServer/tile/{z}/{y}/{x}"; }
+  var ESRI_ROADS = "Esri, HERE, Garmin, USGS, Intermap, NGA, EPA, USDA, NPS, OpenStreetMap contributors";
   var BASEMAPS = {
-    map: {label: "map", url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}", subdomains: "", maxZoom: 19,
-          attribution: "Map: Esri, HERE, Garmin, USGS, Intermap, NGA, EPA, USDA, NPS, OpenStreetMap contributors"},
-    satellite: {label: "satellite", url: "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", subdomains: "", maxZoom: 19,
-                attribution: "Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community"}
+    map: {label: "map", url: esri("World_Street_Map"), subdomains: "", maxZoom: 19, attribution: "Map: " + ESRI_ROADS},
+    satellite: {label: "satellite", url: esri("World_Imagery"), subdomains: "", maxZoom: 19,
+                attribution: "Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community"},
+    hybrid: {label: "hybrid", url: esri("World_Imagery"), subdomains: "", maxZoom: 19,
+             overlays: [esri("Reference/World_Boundaries_and_Places"), esri("Reference/World_Transportation")],
+             attribution: "Imagery: Esri, Maxar, Earthstar Geographics, and the GIS User Community. Labels: " + ESRI_ROADS},
+    gray: {label: "gray", url: esri("Canvas/World_Light_Gray_Base"), subdomains: "", maxZoom: 19, maxNativeZoom: 16,
+           overlays: [esri("Canvas/World_Light_Gray_Reference")], attribution: "Map: " + ESRI_ROADS}
   };
+  // the artifact page may load images only from itself, so live tiles never reach it: there each route shows the gray
+  // picture the build made for it (geo.basemap, review_core/basemap.py) and the page offers no basemap choice
+  function isStatic() { return !!window.REVIEW_STATIC; }
   var REG = {};          // id -> {geo, opts, map, base, el, view}
   var PAIRS = {};        // id -> the id its view follows (syncMaps)
   var LOADING = null, IO = null, MO = null;
@@ -35,14 +46,19 @@
   function tileLayer(name) {
     var b = BASEMAPS[name], o = {maxZoom: b.maxZoom, attribution: b.attribution};
     if (b.subdomains) o.subdomains = b.subdomains;
-    return window.L.tileLayer(b.url, o);
+    if (b.maxNativeZoom) o.maxNativeZoom = b.maxNativeZoom;
+    var base = window.L.tileLayer(b.url, o);
+    if (!b.overlays) return base;
+    var lo = {maxZoom: b.maxZoom};
+    if (b.maxNativeZoom) lo.maxNativeZoom = b.maxNativeZoom;
+    return window.L.layerGroup([base].concat(b.overlays.map(function (u) { return window.L.tileLayer(u, lo); })));
   }
   function setBasemap(name) {
     if (!BASEMAPS[name]) return;
     try { window.localStorage.setItem(PREF_KEY, name); } catch (e) { /* the choice lasts for this page only */ }
     Object.keys(REG).forEach(function (id) {
       var r = REG[id];
-      if (!r.map || r.baseName === name) return;
+      if (!r.map || !r.base || r.baseName === name) return;
       r.map.removeLayer(r.base);
       r.base = tileLayer(name).addTo(r.map);
       r.baseName = name;
@@ -104,7 +120,7 @@
     if (!r || r.geo !== geo) REG[id] = r = {geo: geo, opts: opts || {}, view: r && r.geo === geo ? r.view : null};
     else r.opts = opts || {};
     var cur = basemap();
-    var btns = Object.keys(BASEMAPS).map(function (k) {
+    var btns = (isStatic() ? [] : Object.keys(BASEMAPS)).map(function (k) {
       return '<button type="button" class="ghost" data-basemap="' + k + '" aria-pressed="' + (k === cur ? "true" : "false") + '">' + esc(BASEMAPS[k].label) + "</button>";
     }).join("");
     var lab = r.opts.label ? '<span class="rmap-label">' + esc(r.opts.label) + "</span>" : "";
@@ -139,12 +155,18 @@
       if (r.map) { try { r.map.remove(); } catch (e) { /* its container is gone */ } r.map = null; }
       el.innerHTML = "";
       el.setAttribute("data-drawn", "yes");
-      var map = L.map(el, {keyboard: false, scrollWheelZoom: false, worldCopyJump: true, attributionControl: true});
+      var g = r.geo || {}, pic = isStatic() ? g.basemap : null, mo = {keyboard: false, scrollWheelZoom: false, worldCopyJump: true, attributionControl: true};
+      if (pic && typeof pic.zoom === "number") mo.maxZoom = pic.zoom + 3;     // past that the picture is only blur
+      var map = L.map(el, mo);
       map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
-      r.map = map; r.el = el; r.baseName = basemap();
-      r.base = tileLayer(r.baseName).addTo(map);
+      r.map = map; r.el = el;
+      if (!isStatic()) { r.baseName = basemap(); r.base = tileLayer(r.baseName).addTo(map); }
+      else if (pic && pic.url && Array.isArray(pic.bounds)) {
+        r.baseName = "gray";
+        r.base = L.imageOverlay(pic.url, pic.bounds, {pane: "tilePane", interactive: false, attribution: BASEMAPS.gray.attribution}).addTo(map);
+      } else { r.baseName = null; r.base = null; }
       // the view is set before any vector layer goes on: Leaflet clips a path against the view and fails without one
-      var g = r.geo || {}, show = r.opts.show || "both", col = accent(), drawn = [], layers = [];
+      var show = r.opts.show || "both", col = accent(), drawn = [], layers = [];
       function route(fc, style, halo) {
         if (!fc || !lines(fc).length) return;
         if (halo) layers.push(L.geoJSON(fc, {style: {color: "#ffffff", weight: style.weight + 4, opacity: 0.75}, interactive: false}));
