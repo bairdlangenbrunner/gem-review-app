@@ -55,7 +55,9 @@
     moreTabs: false,         // T.collapseTabs: the minor, items and everything tabs are open (they start folded behind a + next to major)
     panel: null,             // a tracker panel drawn in the card instead of a card (T.cardPanel)
     igOpen: {},              // item group id -> item details open state (survives a re-render; reset per card)
-    notes: {}                // line key -> note typed in the line's note box, not saved yet (goes with the next call)
+    notes: {},               // line key -> note typed in the line's note box, not saved yet (goes with the next call)
+    history: [],             // [{label, snaps}]: the lines as they were before each save this session, newest last ("undo last")
+    linkSkip: null           // "one" | "both": the answer kept when "don't ask again this session" was ticked on the linked-pair question
   };
   var ITEM_BY_KEY = {};
   var LINE_BY_KEY = {};
@@ -960,27 +962,102 @@
     var e = $("dstat-" + i);
     if (e) { e.textContent = text; e.className = "dstat" + (failed ? " err" : (text === "saving…" ? " saving" : "")); }
   }
+  // ---- every line save goes through commit: the lines are snapshotted first (S.history, for "undo last"), then saved, then the records land ----
+  var HISTORY_MAX = 50;
+  function snap(l) {
+    var s = {key: l.key, decided: !!cur(l), decision: l.decision, suggested_value: l.suggested_value || "", reference: l.reference || "", note: l.decision_note || ""};
+    if (T.snapshot) s.extra = T.snapshot(l);       // the tracker's own record fields to put back (LNG: suggest_kind, suggested_refs)
+    return s;
+  }
+  function restoreRec(s) {
+    if (!s.decided) return {key: s.key, undo: true, via: "undo"};
+    var r = {key: s.key, decision: s.decision, note: s.note, reference: s.reference, via: "undo"};
+    if (s.decision === "suggest") r.suggested_value = s.suggested_value;
+    if (s.extra) Object.keys(s.extra).forEach(function (k) { r[k] = s.extra[k]; });
+    return r;
+  }
+  function commit(recs, label, undoing) {
+    var before = recs.map(function (r) { return LINE_BY_KEY[r.key]; }).filter(Boolean).map(snap);
+    return Store.decide(recs).then(function (saved) {
+      if (!undoing) { S.history.push({label: label, snaps: before}); if (S.history.length > HISTORY_MAX) S.history.shift(); }
+      applySaved(saved);
+      recs.forEach(function (r) { delete S.notes[r.key]; S.stay[r.key] = true; });
+      banner("");
+      return saved;
+    });
+  }
+  function lineName(l) { return T.lineTitle ? T.lineTitle(l) : (l.column || W.line); }
+  // "undo last": puts back the lines of the newest save as they were before it, one save per press
+  function undoLast() {
+    if (!Store.caps.decide) return notYet();
+    var h = S.history.pop();
+    if (!h) return toast("nothing to undo this session");
+    var keepLine = S.line;
+    commit(h.snaps.map(restoreRec), "", true).then(function (saved) {
+      refilter(true);
+      if (T.afterSave) T.afterSave(saved);
+      if (keepLine >= 0 && $("line-" + keepLine)) setLine(keepLine, true);
+      toast("undone: " + h.label + (S.history.length ? " · press U again for the one before" : ""));
+    }, function (e) { S.history.push(h); toast("undo not saved: " + e.message); });
+  }
+  // Linked pairs (T.partners(l) -> [{line, strict}]): a call on one asks about the other. A strict pair is both or neither.
+  function partnersFor(l, rec) {
+    if (!T.partners || rec.decision === "suggest") return [];
+    return (T.partners(l) || []).filter(function (x) {
+      var p = x && x.line;
+      if (!p || p.key === l.key || S.saving[p.key]) return false;
+      return rec.undo ? !!cur(p) : cur(p) !== rec.decision && offers(p, rec.decision);
+    });
+  }
+  function askLinked(l, rec, parts, go) {
+    var strict = parts.some(function (x) { return x.strict; });
+    if (!strict && S.linkSkip) return go(S.linkSkip === "both" ? parts : []);
+    var dlg = $("dialog"), what = rec.undo ? "undo" : (rec.decision || "");
+    var names = parts.map(function (x) { return "<b>" + esc(lineName(x.line)) + "</b>"; }).join(", ");
+    dlg.setAttribute("data-kind", "linked");
+    dlg.innerHTML = "<h3>" + esc(what) + " " + esc(lineName(l)) + "</h3><p>" + esc(lineName(l)) + " goes with " + names + ". " +
+      (strict ? "These two are decided together." : "Do the same to " + (parts.length === 1 ? "it" : "them") + "?") + "</p>" +
+      (strict ? "" : '<label class="faint"><input type="checkbox" id="dlg-skip"> don\'t ask again this session (give the same answer next time)</label>') +
+      '<div class="actions"><button type="button" class="ghost" id="dlg-cancel">cancel</button>' +
+      (strict ? "" : '<button type="button" class="dlg-alt" id="dlg-one">only this one</button>') +
+      '<button type="button" class="dlg-ok" id="dlg-both">' + (parts.length === 1 ? "both" : "all " + (parts.length + 1)) + "</button></div>";
+    function close(answer) { if (!strict && $("dlg-skip") && $("dlg-skip").checked) S.linkSkip = answer; dlg.close(); }
+    $("dlg-cancel").onclick = function () { dlg.close(); };
+    if (!strict) $("dlg-one").onclick = function () { close("one"); go([]); };
+    $("dlg-both").onclick = function () { close("both"); go(parts); };
+    dlg.showModal();
+  }
   // Save one line's call. The UI changes only after the server confirms; while it is in flight the
-  // line says "saving…", then "accepted by <reviewer> <time>" (or the refusal). No confirm dialog.
+  // line says "saving…", then "accepted by <reviewer> <time>" (or the refusal). No confirm dialog,
+  // except the linked-pair question when the line has a partner.
   function save(l, rec, advance) {
     if (!Store.caps.decide) return notYet();
     if (S.saving[l.key]) return;
-    S.saving[l.key] = true;
+    var parts = partnersFor(l, rec);
+    if (!parts.length) return saveWith(l, rec, [], advance);
+    askLinked(l, rec, parts, function (take) { saveWith(l, rec, take, advance); });
+  }
+  function saveWith(l, rec, parts, advance) {
+    if (S.saving[l.key]) return;
+    var recs = [rec].concat(parts.map(function (x) {
+      var p = x.line, r = rec.undo ? {key: p.key, undo: true} : {key: p.key, decision: rec.decision, note: rec.note || ""};
+      r.via = "linked";
+      return r;
+    }));
+    var label = (rec.undo ? "undo on " : (rec.decision || "call") + " on ") + lineName(l) + (parts.length ? " and its pair" : "");
+    recs.forEach(function (r) { S.saving[r.key] = true; });
     setStat(l._i, "saving…");
-    Store.decide([rec]).then(function (saved) {
-      applySaved(saved);
-      delete S.notes[l.key];
-      S.stay[l.key] = true;
-      banner("");
+    commit(recs, label).then(function (saved) {
       var keepLine = S.line;
       refilter(true);
       if (T.afterSave) T.afterSave(saved);
       if (keepLine >= 0 && $("line-" + keepLine)) setLine(keepLine, true);
       if (advance && S.line === l._i) nextUndecided();
+      if (parts.length) toast(label + " saved", {label: "undo (U)", fn: undoLast});
     }).catch(function (e) {
       setStat(l._i, "not saved: " + e.message, true);
       toast("not saved: " + e.message);
-    }).then(function () { delete S.saving[l.key]; });
+    }).then(function () { recs.forEach(function (r) { delete S.saving[r.key]; }); });
   }
   // l: the line the record lands on, when that is not the line of its own key (a record under an older key)
   function applyRecord(r, l) {
@@ -1128,6 +1205,9 @@
     var prior = l.reviewed && l.decision === "suggest";
     var f = document.createElement("form");
     f.className = "sform";
+    // T.suggestForm(l, prior) -> {html, read(form, l)}: the tracker's own fields; read returns an error string, or the record fields to save
+    var custom = T.suggestForm ? T.suggestForm(l, prior) : null;
+    if (custom) return openCustomSuggest(l, el, f, custom);
     f.innerHTML = '<label>suggested value <input type="text" class="sv" autocomplete="off"></label>' +
       '<label>note <input type="text" class="sn" autocomplete="off" placeholder="why"></label>' +
       (T.suggestRef === false ? "" : '<label>source link <input type="url" class="sr" autocomplete="off" placeholder="https://… (where the value is stated)"></label>') +
@@ -1145,27 +1225,49 @@
       e.preventDefault();
       if (blankv(sv.value) && blankv(sn.value)) { err.textContent = "give a suggested value or a note"; return; }
       if (!blankv(sr.value) && !/^https?:\/\/\S+$/.test(sr.value.trim())) { err.textContent = "the source link must start with http:// or https://"; return; }
-      var b = f.querySelector(".sv-save"); b.disabled = true;
-      if (S.saving[l.key]) return;
-      S.saving[l.key] = true;
       var srec = {key: l.key, decision: "suggest", suggested_value: sv.value, note: sn.value};
       if (T.suggestRef !== false) srec.reference = sr.value.trim();
-      Store.decide([srec]).then(function (saved) {
-        applySaved(saved);
-        delete S.notes[l.key];
-        S.stay[l.key] = true;
-        banner("");
-        var keepLine = S.line;
-        refilter(true);
-        if (keepLine >= 0 && $("line-" + keepLine)) setLine(keepLine, true);
-        toast("suggestion saved");
-      }).catch(function (e2) {
-        b.disabled = false; err.textContent = "not saved: " + e2.message;
-      }).then(function () { delete S.saving[l.key]; });
+      saveSuggest(l, f, srec, err);
     };
     var ctl = el.querySelector(".controls");
     ctl.parentNode.insertBefore(f, ctl.nextSibling);
     sv.focus(); sv.select();
+  }
+  function saveSuggest(l, f, srec, err) {
+    if (S.saving[l.key]) return;
+    var b = f.querySelector(".sv-save"); b.disabled = true;
+    S.saving[l.key] = true;
+    commit([srec], "suggestion on " + lineName(l)).then(function (saved) {
+      var keepLine = S.line;
+      refilter(true);
+      if (T.afterSave) T.afterSave(saved);
+      if (keepLine >= 0 && $("line-" + keepLine)) setLine(keepLine, true);
+      toast("suggestion saved");
+    }).catch(function (e2) {
+      b.disabled = false; err.textContent = "not saved: " + e2.message;
+    }).then(function () { delete S.saving[l.key]; });
+  }
+  function openCustomSuggest(l, el, f, custom) {
+    f.innerHTML = custom.html + '<div class="sv-actions"><button type="submit" class="sv-save">save suggestion</button><button type="button" class="sv-cancel">cancel (esc)</button>' +
+      '<span class="faint sv-err" role="alert"></span></div>';
+    var err = f.querySelector(".sv-err");
+    f.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeSuggest(); }
+      else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); f.onsubmit(e); }     // a textarea takes Enter as a new line
+    });
+    f.querySelector(".sv-cancel").onclick = closeSuggest;
+    f.onsubmit = function (e) {
+      if (e && e.preventDefault) e.preventDefault();
+      var got = custom.read(f, l);
+      if (typeof got === "string") { err.textContent = got; return; }
+      var srec = {key: l.key, decision: "suggest"};
+      Object.keys(got || {}).forEach(function (k) { srec[k] = got[k]; });
+      saveSuggest(l, f, srec, err);
+    };
+    var ctl = el.querySelector(".controls");
+    ctl.parentNode.insertBefore(f, ctl.nextSibling);
+    var first = f.querySelector("textarea, input:not([type=radio]):not([type=checkbox])");
+    if (first) { first.focus(); if (first.select) first.select(); }
   }
   function suggestKey(e) {
     if (e && e.preventDefault) e.preventDefault();   // the "s" must not land in the form's input
@@ -1183,7 +1285,7 @@
       if (m) m.open = !m.open;
     },
     a: function () { decideCurrent("accept", true); }, h: function () { decideCurrent("hold", true); },
-    r: function () { decideCurrent("reject", true); }, s: suggestKey, u: undoCurrent,
+    r: function () { decideCurrent("reject", true); }, s: suggestKey, u: undoCurrent, U: undoLast,
     "/": function (e) { e.preventDefault(); $("f-q").focus(); $("f-q").select(); },
     i: toggleItemsTab,
     "?": showHelp
@@ -1201,7 +1303,7 @@
                 ["a / h / r", "accept / hold / reject the " + wl + "; saved at once, then on to the next open " + wl],
                 ["s", "suggest a different value: an inline form on the " + wl + " (value + note; enter saves, esc cancels)"],
                 ["i", "switch the card between " + W.lines + " and items; calls save on change"],
-                ["u", "undo: the " + wl + " goes back to undecided"], ["o", "open the " + wl + "'s first source link (new tab)"], ["d", "show / hide the " + wl + "'s notes"],
+                ["u", "undo: the " + wl + " goes back to undecided"], ["U", "undo the last save (a call, a pair, a bulk call), one save per press, as far back as this session goes"], ["o", "open the " + wl + "'s first source link (new tab)"], ["d", "show / hide the " + wl + "'s notes"],
                 ["/", "search"], ["?", "this help"]];
     if (typeof T.help === "function") return T.help(rows) || rows;
     return T.help || rows;
@@ -1265,12 +1367,19 @@
     if (f) f(e);
   }
   var toastTimer = null;
-  function toast(msg) {
+  // act: {label, fn}, a button on the toast (an undo); the toast then stays longer
+  function toast(msg, act) {
     var t = $("toast");
     t.textContent = msg;
+    if (act) {
+      var b = document.createElement("button");
+      b.type = "button"; b.className = "ghost toast-act"; b.textContent = act.label;
+      b.onclick = function () { t.hidden = true; act.fn(); };
+      t.appendChild(document.createTextNode(" ")); t.appendChild(b);
+    }
     t.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.hidden = true; }, 4000);
+    toastTimer = setTimeout(function () { t.hidden = true; }, act ? 8000 : 4000);
   }
   var STICKY = "";
   function banner(msg) { var b = $("banner"); msg = msg || STICKY; b.textContent = msg; b.hidden = !msg; }
@@ -1280,6 +1389,8 @@
     if (pidEl) { copyText(pidEl.textContent, pidEl.textContent + " copied"); return; }
     var clip = e.target.closest("button[data-clip]");
     if (clip) { var ct = clip.getAttribute("data-clip"); copyText(ct, (ct.length > 60 ? ct.slice(0, 59) + "…" : ct) + " copied"); return; }
+    var on = e.target.closest("[data-only]");
+    if (on) { e.preventDefault(); return filterOnly(on.getAttribute("data-only"), on.getAttribute("data-facet") || "q"); }
     if (T.onCardClick && T.onCardClick(e)) return;      // the tracker's own buttons and boxes
     if (e.target.closest(".dnote")) { var nl = e.target.closest(".line"); if (nl) setLine(+nl.getAttribute("data-i"), true); return; }
     if (e.target.closest("[data-showall]")) {
@@ -1371,9 +1482,7 @@
     $("dlg-cancel").onclick = function () { dlg.close(); };
     $("dlg-ok").onclick = function () {
       var ok = $("dlg-ok"); ok.disabled = true; ok.textContent = "saving…";
-      Store.decide(t.lines.map(function (l) { return {key: l.key, decision: "accept"}; })).then(function (saved) {
-        applySaved(saved);
-        t.lines.forEach(function (l) { S.stay[l.key] = true; });
+      commit(t.lines.map(function (l) { return {key: l.key, decision: "accept"}; }), bulkTitle(mode) + " (" + plural(t.lines.length, W.line) + ")").then(function (saved) {
         dlg.close();
         refilter(true);
         toast("accepted " + plural(saved.filter(function (r) { return !("call" in r); }).length, W.line));
@@ -1385,6 +1494,87 @@
       });
     };
     dlg.showModal();
+  }
+  // Every line the filters show, on every card in view: accept, hold or reject them in one save (T.bulkFiltered turns the buttons on).
+  // A line already at that call, one not counted, or one that does not offer the call is skipped. Partners outside the filter
+  // (T.partners) are named; a strict partner always goes with its line, the others only on "include the partners".
+  function filterDesc() {
+    var q = routeHash().split("?")[1] || "";
+    return q ? decodeURIComponent(q).replace(/&/g, ", ") : "no filters";
+  }
+  function bulkFilteredTargets(decision) {
+    var q = FS.q.trim().toLowerCase(), t = {lines: [], changes: 0, skip: 0, strict: [], loose: []}, inT = {};
+    S.visible.forEach(function (pi) {
+      var p = cards()[pi];
+      p.lines.forEach(function (l) {
+        if (!match(l, p, FS, null, q) || cur(l) === decision) return;
+        if (!counted(l) || !offers(l, decision)) { t.skip++; return; }
+        t.lines.push(l); inT[l.key] = 1;
+        if (cur(l)) t.changes++;
+      });
+    });
+    if (T.partners) t.lines.forEach(function (l) {
+      (T.partners(l) || []).forEach(function (x) {
+        var p = x && x.line;
+        if (!p || inT[p.key] || cur(p) === decision || !offers(p, decision)) return;
+        inT[p.key] = 1;
+        (x.strict ? t.strict : t.loose).push(p);
+      });
+    });
+    return t;
+  }
+  function showBulkFiltered(decision) {
+    if (!Store.caps.decide) return notYet();
+    var t = bulkFilteredTargets(decision), dlg = $("dialog"), desc = filterDesc();
+    if (!t.lines.length) return toast("nothing in view to " + decision + (t.skip ? " (" + t.skip + " skipped)" : ""));
+    var warn = T.bulkWarn ? T.bulkWarn(t.lines.concat(t.strict, t.loose), decision) : "";
+    function names(ls) { return ls.slice(0, 12).map(function (l) { return esc((cards()[l._p] || {}).name || "") + " · " + esc(lineName(l)); }).join("; ") + (ls.length > 12 ? "; and " + (ls.length - 12) + " more" : ""); }
+    dlg.setAttribute("data-kind", "bulk");
+    dlg.innerHTML = "<h3>" + esc(decision) + " every " + esc(W.line) + " in view</h3>" +
+      "<p><b>" + plural(t.lines.length, W.line) + "</b> will be marked " + esc(VERB[decision] || decision) + " as " + esc(ME) + ", in one save. Filters: " + esc(desc) + ".</p>" +
+      (t.changes ? "<p>" + plural(t.changes, W.line) + " already " + (t.changes === 1 ? "has" : "have") + " another call, which this replaces.</p>" : "") +
+      (t.strict.length ? "<p>Their " + plural(t.strict.length, "partner") + " outside the filter go too, because a pair is decided together: " + names(t.strict) + ".</p>" : "") +
+      (t.loose.length ? "<p>" + plural(t.loose.length, "linked " + W.line) + " outside the filter: " + names(t.loose) + ".</p>" : "") +
+      (t.skip ? '<p class="faint">skipped: ' + t.skip + " that do not take this call or are not waiting on one.</p>" : "") +
+      (warn ? '<p class="err">' + warn + "</p>" : "") +
+      '<p class="faint" id="bulk-err"></p><div class="actions"><button type="button" class="ghost" id="dlg-cancel">cancel</button>' +
+      '<button type="button" id="dlg-ok"' + (t.loose.length ? ' class="dlg-alt"' : "") + ">" + (t.loose.length ? "only the filtered " + W.lines : esc(decision) + " " + (t.lines.length + t.strict.length)) + "</button>" +
+      (t.loose.length ? '<button type="button" id="dlg-all">include the partners</button>' : "") + "</div>";
+    function go(withLoose, btn) {
+      var via = ("bulk:" + desc).slice(0, 300);
+      var recs = t.lines.concat(t.strict).map(function (l) { return {key: l.key, decision: decision, via: via}; })
+        .concat(withLoose ? t.loose.map(function (l) { return {key: l.key, decision: decision, via: "linked"}; }) : []);
+      Array.prototype.forEach.call(dlg.querySelectorAll(".actions button"), function (b) { b.disabled = true; });
+      btn.textContent = "saving…";
+      var label = decision + " on " + plural(recs.length, W.line) + " in view";
+      commit(recs, label).then(function (saved) {
+        dlg.close();
+        refilter(true);
+        if (T.afterSave) T.afterSave(saved);
+        toast(label + " saved", {label: "undo (U)", fn: undoLast});
+      }).catch(function (e) {
+        Array.prototype.forEach.call(dlg.querySelectorAll(".actions button"), function (b) { b.disabled = false; });
+        btn.textContent = "retry";
+        $("bulk-err").textContent = "not saved: " + e.message; $("bulk-err").className = "err";
+      });
+    }
+    $("dlg-cancel").onclick = function () { dlg.close(); };
+    $("dlg-ok").onclick = function () { go(false, $("dlg-ok")); };
+    if (t.loose.length) $("dlg-all").onclick = function () { go(true, $("dlg-all")); };
+    dlg.showModal();
+  }
+  // Click to filter: an element with data-only="<value>" (and data-facet="<filter>", the search box by default) shows only what matches it
+  function only(value, text, facet, tip) {
+    return '<a href="#" class="only" data-only="' + esc(value) + '"' + (facet ? ' data-facet="' + esc(facet) + '"' : "") +
+      tipAttrs(tip || "show only " + value) + ">" + esc(text == null ? value : text) + "</a>";
+  }
+  function filterOnly(value, facet) {
+    if (!(facet in FS)) facet = "q";
+    FS = defaults();
+    FS[facet] = facet === "q" ? String(value).toLowerCase() : value;
+    syncControls();
+    changed(false);
+    toast("showing only " + value + " · reset clears it");
   }
   function copyText(text, msg) {
     msg = msg || "copied";
@@ -1718,6 +1908,11 @@
       if (b.getAttribute("aria-disabled") === "true") return toast(b.getAttribute("data-why"));
       showBulk(b.getAttribute("data-bulk"));
     });
+    var fb = $("f-bulk");
+    if (fb && T.bulkFiltered) {
+      fb.hidden = false;
+      fb.addEventListener("click", function (e) { var b = e.target.closest("button[data-fbulk]"); if (b) showBulkFiltered(b.getAttribute("data-fbulk")); });
+    }
     $("card").addEventListener("change", onItemChange);
     $("card").addEventListener("input", onNoteInput);
     $("card").addEventListener("toggle", function (e) {
@@ -1783,7 +1978,7 @@
     applySaved: applySaved, notYet: notYet, facetSelect: facetSelect, fitSelect: fitSelect, facetCounts: facetCounts, match: match, uniq: uniq, defaults: defaults,
     isItemKind: isItemKind, itemsInView: itemsInView, kindLabel: kindLabel, callText: callText, itemHead: itemHead, plural: plural,
     settled: settled, grayed: grayed, counted: counted, isOpen: isOpen, defaultTab: defaultTab, decisionText: decisionText, pipeMatches: pipeMatches,
-    save: save, undoCurrent: undoCurrent, noteOf: noteOf, noteBox: noteBox, dropNoteSave: dropNoteSave, setStat: setStat,
+    save: save, undoCurrent: undoCurrent, undoLast: undoLast, commit: commit, only: only, filterOnly: filterOnly, showBulkFiltered: showBulkFiltered, lineName: lineName, noteOf: noteOf, noteBox: noteBox, dropNoteSave: dropNoteSave, setStat: setStat,
     nextUndecided: nextUndecided, decideCurrent: decideCurrent, lineActions: lineActions, routeHash: routeHash, openSuggest: openSuggest, reload: function (data) { reload(data); },
     get STICKY() { return STICKY; }, setSticky: function (msg) { STICKY = msg || ""; banner(); }
   };

@@ -159,3 +159,18 @@ def test_legacy_keys_speak_for_a_line_with_no_record(tmp_path):
                             "ts": "2026-10-01T10:00:00-04:00", "undecided": False}], dirs)
     api["overlay"](data, dirs)
     assert data["widgets"][0]["lines"][0]["decision"] == "accept"
+
+
+def test_via_says_how_a_call_was_made(world):
+    s, data, dirs = ns(world), world["data"], world["dirs"]
+    size, color = data["widgets"][0]["lines"]
+    out = s.decide([{"key": size["key"], "decision": "accept", "via": "bulk:q=widget"},
+                    {"key": color["key"], "decision": "accept", "via": "linked"}], data, "BL", dirs)
+    assert [r["via"] for r in out] == ["bulk:q=widget", "linked"]
+    # a plain call carries no via at all; an empty one is dropped
+    out = s.decide([{"key": size["key"], "undo": True, "via": ""}], data, "BL", dirs)
+    assert "via" not in out[0]
+    with pytest.raises(core.Invalid, match="via"):
+        s.validate([{"key": size["key"], "decision": "accept", "via": "x" * 301}], data)
+    with pytest.raises(core.Invalid, match="via"):
+        s.validate([{"key": size["key"], "decision": "accept", "via": 3}], data)

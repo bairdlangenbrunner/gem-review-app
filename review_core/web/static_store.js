@@ -15,7 +15,7 @@
   // the rules the store checks with (store.page_rules); the fallbacks are the store's own values, for a page block without them
   var RULES = TB.rules || {};
   function rx(p, d) { try { return new RegExp(typeof p === "string" ? p : d); } catch (e) { return new RegExp(d); } }
-  var MAX_TEXT = RULES.max_text || 5000, MAX_RECORDS = RULES.max_records || 5000, CHUNK = 250;
+  var MAX_TEXT = RULES.max_text || 5000, MAX_RECORDS = RULES.max_records || 5000, VIA_MAX = 300, CHUNK = 250;
   var INITIALS_RE = rx(RULES.initials, "^[A-Z]{1,3}$"), EMAIL_RE = rx(RULES.email, "^([^@\\s]+)@[^@\\s]+\\.[^@\\s]+$");
   var URL_RE = rx(RULES.url, "^https?://\\S+$"), EMAIL_SPLIT = rx(RULES.email_split, "[._+\\-]+"), NAME_SPLIT = rx(RULES.name_split, "\\s+");
   var UNDO_KEEPS_REF = RULES.undo_keeps_reference !== false;
@@ -296,6 +296,10 @@
         rec.reference = undo && !UNDO_KEEPS_REF ? "" : ref;
       }
       rec.note = note; rec.reviewer = G.me; rec.ts = null; rec.undecided = undo;
+      if (r.via != null) {          // how the call was made: "single", "linked", "undo", "bulk:<filters>"
+        if (typeof r.via !== "string" || r.via.length > VIA_MAX) throw refuse("record " + i + ": via must be text of at most " + VIA_MAX + " characters");
+        if (r.via) rec.via = r.via;
+      }
       out = out.concat(H.lineRecord ? H.lineRecord(i, r, e, rec, API) : [rec]);
     });
     return out;

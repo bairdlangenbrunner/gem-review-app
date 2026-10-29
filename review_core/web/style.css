@@ -315,6 +315,12 @@ dialog kbd { background: var(--sel); border-color: color-mix(in srgb, var(--acce
 .sform label { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .sform .sv { min-width: 26em; } .sform .sn { min-width: 16em; } .sform .sr { min-width: 22em; }
 .sform .sv-err { color: var(--t-low-ink); }
+.sform .sv-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%; }
+.sform textarea { font: inherit; min-width: 26em; max-width: 100%; }
+.toast .toast-act { margin-left: 8px; padding: 2px 8px; }
+a.only { color: inherit; text-decoration: underline dotted; text-underline-offset: 3px; cursor: pointer; }
+a.only:hover { text-decoration-style: solid; }
+.fbulk { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .card h3.allitems { margin: 26px 0 0; font-size: 17px; border-top: 2px solid var(--line); padding-top: 10px; }
 .card h2 a.only { border-bottom-width: 1px; }
 /* change-type colors in the pair table: new (fill / added ref) green, changed amber, cleared red */

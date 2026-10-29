@@ -36,6 +36,7 @@ _EMAIL_SPLIT = r"[._+\-]+"      # an address's local part splits into name parts
 _NAME_SPLIT = r"\s+"
 MAX_RECORDS = 5000      # the most records one request may carry
 MAX_TEXT = 5000         # the longest note or suggested value a record may carry, in characters
+VIA_MAX = 300           # the longest "via" (how a call was made: single, linked, undo, bulk:<filters>)
 
 
 class Invalid(ValueError):
@@ -364,6 +365,12 @@ def bind(config, root=None, into=None):
                 check_ref(i, ref)
                 rec["reference"] = ref
             rec.update({"note": note, "reviewer": reviewer, "ts": None, "undecided": undo})
+            via = r.get("via")
+            if via is not None:          # how the call was made: "single", "linked", "undo", "bulk:<filters>"
+                if not isinstance(via, str) or len(via) > VIA_MAX:
+                    raise Invalid(f"record {i}: via must be text of at most {VIA_MAX} characters")
+                if via:
+                    rec["via"] = via
             out.extend(config.line_record(api, i, r, obj, card, rec) if config.line_record else [rec])
         return out
 
