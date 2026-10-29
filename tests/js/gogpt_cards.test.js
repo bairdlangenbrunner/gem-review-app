@@ -68,14 +68,15 @@ function dataset() {
   };
 }
 function find(A, pid) { var hit = -1; A.cards().forEach(function (p, i) { if (p.pid === pid) hit = i; }); return hit; }
-function showCard(P, pid) {
+function showCard(P, pid, everyStatus) {
   var A = P.app.api;
+  if (everyStatus) { A.FS.status = []; A.refilter(true); }      // Brandywine is operating, so the default in-development filter would hide its lines
   A.S.pipe = find(A, pid);
   A.renderCard();
   return P.$("card").innerHTML;
 }
 
-test("the queue lists the three sections in order, with their card counts; a plant GEM does not track sits on the new tab", function () {
+test("the queue lists the sections in order, with their card counts; a plant GEM does not track and new units at a tracked plant sit on the new tab", function () {
   var P = page(dataset());
   return P.booted.then(function () {
     var A = P.app.api;
@@ -86,16 +87,20 @@ test("the queue lists the three sections in order, with their card counts; a pla
     var html = P.$("pipes").innerHTML;
     var secs = [], re = /<li class="qsec">.*?>([a-z ]+)<\/span> <span class="n">(\d+)<\/span><\/li>/g, m;
     while ((m = re.exec(html))) secs.push(m[1] + " " + m[2]);
-    assert.deepEqual(secs, ["plants 1", "proposed additions 1", "watch list 1"]);
+    assert.deepEqual(secs, ["plants 1", "watch list 1"]);
     assert.doesNotMatch(html, /Severn barge station/);
-    assert.match(P.$("qtabs").innerHTML, /data-qtab="new" aria-selected="false"[^>]*>new <span class="n">1<\/span>/);
+    assert.match(P.$("qtabs").innerHTML, /data-qtab="new" aria-selected="false"[^>]*>new <span class="n">2<\/span>/);
     A.selectPipe(find(A, "new:severn-barge-station"));    // opening it switches the tab
     assert.match(P.$("qtabs").innerHTML, /data-qtab="new" aria-selected="true"/);
     assert.match(P.$("pipes").innerHTML, /Severn barge station[\s\S]*?new plant/);
     A.selectPipe(find(A, "L1#add"));
     html = P.$("pipes").innerHTML;
     // the queue rows say what each card is, and the addition and watch rows name the plant id, not the card id
-    assert.match(html, /1 new unit, 1 lead/);
+    assert.match(html, /proposed additions<\/span> <span class="n">2<\/span>[\s\S]*Brandywine power facility[\s\S]*?1 new unit, 1 lead/);   // the new units at a tracked plant sit on the new tab too
+    assert.match(P.$("qtabs").innerHTML, /data-qtab="new" aria-selected="true"/);
+    assert.doesNotMatch(html, /L1#add/);
+    A.selectPipe(find(A, "L1#watch"));
+    html = P.$("pipes").innerHTML;
     assert.match(html, /watch/);
     assert.doesNotMatch(html, /L1#add|L1#watch/);
   });
@@ -166,10 +171,10 @@ test("the status filter goes on the current unit statuses, never a proposed one;
     assert.ok(at("data-group=\"rest\"") < at('value="operating"') && at('value="operating"') < at('value="retired"'));
     assert.doesNotMatch(html.slice(at("data-group=\"rest\"")), /checked/);   // off by default
     assert.doesNotMatch(html, /proposed/);                              // the proposed new-row Status is not a choice
-    fs.status = ["pre-construction"]; A.refilter(true);                 // the addition card has no units of its own, so it follows the plant card's statuses
-    assert.deepEqual(plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })), ["L1", "L1#add"]);
+    fs.status = ["pre-construction"]; A.refilter(true);                 // the addition card goes on what it proposes, not on the plant card's statuses
+    assert.deepEqual(plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })), ["L1"]);
     fs.status = ["Pre construction", "retired"]; A.refilter(true);       // spelling does not matter
-    assert.deepEqual(plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })), ["L1", "L1#add", "L1#watch"]);
+    assert.deepEqual(plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })), ["L1", "L1#watch"]);
   });
 });
 
@@ -197,16 +202,46 @@ test("every in-development status is listed under its group; one no plant has is
   });
 });
 
-test("new to database sits below the other statuses and picks the plants GEM does not track yet", function () {
-  var P = page(dataset());
+test("new plants split into new (in-dev) under in development and new (other) at the very bottom, by the statuses they propose", function () {
+  var d = dataset();
+  d.plants.push({pid: "new:old-mill", plant_pid: "", card_kind: "addition", name: "Old mill", dir: "a", country: "United States", state: "Maryland", units: [],
+                 lines: [line("new:old-mill", "us-md-eia998:plant:newplant", {kind: "new_row", column: "", unit_name: "", gem_unit_id: "", proposed: "new plant",
+                                                                             proposed_values: {}, units: [{unit_name: "1", fields: {Status: "operating"}}, {unit_name: "2", fields: {Status: "retired"}}],
+                                                                             verifications: ver(true), ready: true, lane: "newplants", plant_name: "Old mill"})],
+                 items: []});
+  d.plants.push({pid: "new:byron-wayne", plant_pid: "", card_kind: "watch", name: "Byron to Wayne", dir: "a", country: "United States", state: "Illinois", units: [], lines: [],
+                 items: [item("new:byron-wayne", "il:plant:monitor-9", {monitor_kind: "new_to_tracker", status: "cancelled", capacity_mw: "550"})]});
+  var P = page(d);
   return P.booted.then(function () {
     var A = P.app.api, html = P.$("f-status").innerHTML;
-    assert.ok(html.indexOf('value="new to database"') > html.indexOf('value="shelved - inferred"'));
-    assert.doesNotMatch(html, /value="new to database" disabled/);
-    A.FS.status = ["new to database"]; A.refilter(true);
-    assert.deepEqual(plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })), ["new:severn-barge-station"]);
+    assert.ok(html.indexOf('value="new (in-dev)"') > html.indexOf('value="shelved - inferred"'));
+    assert.ok(html.indexOf('value="new (in-dev)"') < html.indexOf('data-group="rest"'));
+    assert.ok(html.indexOf('value="new (other)"') > html.indexOf('value="retired"'));
+    assert.match(html, /sgroup ssep"[^>]*><input type="checkbox" data-group="rest"/);
+    assert.doesNotMatch(html, /value="new \(other\)" checked/);
+    function shown() { return plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })); }
+    assert.deepEqual(shown(), ["L1#add", "new:severn-barge-station"]);      // no status given: in development by default
+    A.FS.status = ["new (other)"]; A.refilter(true);
+    assert.deepEqual(shown(), ["new:old-mill", "new:byron-wayne"]);     // a watch item proposed as cancelled is new (other) too
     A.FS.status = ["operating"]; A.refilter(true);
     assert.ok(A.S.visible.every(function (i) { return A.cards()[i].pid.indexOf("new:") !== 0; }));
+  });
+});
+
+test("new units at a tracked plant go on the status they propose: an operating new unit is new (other), off by default, whatever the plant's status", function () {
+  var d = dataset();
+  d.plants[0].units = d.plants[1].units = d.plants[3].units = [{gem_unit_id: "G1", unit_name: "F701", status: "construction"}];
+  d.plants[1].lines[0].proposed_values = {Status: "operating", "Start year": "1968"};
+  d.plants[1].items = [];
+  var P = page(d);
+  return P.booted.then(function () {
+    var A = P.app.api;
+    function shown() { return plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })); }
+    assert.deepEqual(shown(), ["L1", "new:severn-barge-station", "L1#watch"]);
+    A.FS.status = ["new (other)"]; A.refilter(true);
+    assert.deepEqual(shown(), ["L1#add"]);
+    A.FS.status = ["construction"]; A.refilter(true);
+    assert.deepEqual(shown(), ["L1", "L1#watch"]);
   });
 });
 
@@ -231,15 +266,15 @@ test("the page opens on the plants in development plus the new ones: an operatin
   return P.booted.then(function () {
     var A = P.app.api;
     function shown() { return plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })); }
-    assert.deepEqual(plain(A.FS.status), ["announced", "pre-construction", "construction", "shelved", "shelved - inferred", "new to database"]);
-    assert.deepEqual(shown(), ["new:severn-barge-station"]);
+    assert.deepEqual(plain(A.FS.status), ["announced", "pre-construction", "construction", "shelved", "shelved - inferred", "new (in-dev)"]);
+    assert.deepEqual(shown(), ["L1#add", "new:severn-barge-station"]);         // the addition card proposes a unit with no in-development status, so it is new (in-dev)
     assert.doesNotMatch(P.$("active-filters").innerHTML, /status/);            // the default draws no chip
     assert.equal(P.$("f-active").hidden, true);                                // and no active filters button
-    assert.equal(A.routeHash(), "#/new%3Asevern-barge-station");                // and nothing in the address
-    // ticking operating on under other statuses in the status menu brings the plant card and, with it, its addition and watch cards (they follow the plant's status)
+    assert.equal(A.routeHash(), "#/L1%23add");                                  // and nothing in the address
+    // ticking operating on under other statuses in the status menu brings the plant card and, with it, its watch card (it follows the plant's status)
     A.FS.status = A.defaults().status.concat(["operating"]); A.refilter(true); A.renderActive();
     assert.deepEqual(shown(), ["L1", "L1#add", "new:severn-barge-station", "L1#watch"]);
-    assert.match(P.$("active-filters").innerHTML, /status: in development, operating, new to database/);
+    assert.match(P.$("active-filters").innerHTML, /status: in development, operating, new \(in-dev\)/);
     assert.equal(P.$("active-filters").hidden, true);                          // the chips stay folded until the button is clicked
     assert.equal(P.$("f-active").hidden, false);
     assert.match(P.$("f-active").textContent, /active filters \(1\)/);
@@ -271,7 +306,7 @@ test("a plant with no suggested changes: one flat card with a checked / hold for
   var P = page(withNoChangePlant(dataset()));
   return P.booted.then(function () {
     var A = P.app.api;
-    assert.deepEqual(plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })), ["L9", "new:severn-barge-station"]);   // announced: in the default view
+    assert.deepEqual(plain(A.S.visible.map(function (i) { return A.cards()[i].pid; })), ["L9", "L1#add", "new:severn-barge-station"]);   // announced: in the default view
     var html = showCard(P, "L9");
     assert.match(html, /class="flatcard"/);
     assert.doesNotMatch(html, /data-bulk=|data-tab="major"/);
@@ -291,7 +326,7 @@ test("a plant with no suggested changes: one flat card with a checked / hold for
     // the queue lists one tab at a time: a plant with nothing proposed sits on "to check", not "suggestions"
     assert.doesNotMatch(P.$("pipes").innerHTML, /Zed peaker/);
     assert.match(P.$("qtabs").innerHTML, /data-qtab="suggestions" aria-selected="true"[^>]*>suggestions <span class="n">0<\/span>/);
-    assert.match(P.$("qtabs").innerHTML, />new <span class="n">1<\/span>/);
+    assert.match(P.$("qtabs").innerHTML, />new <span class="n">2<\/span>/);
     assert.match(P.$("qtabs").innerHTML, />to check <span class="n">1<\/span>/);
     A.selectPipe(A.cards().findIndex(function (p) { return p.pid === "L9"; }));   // opening it switches the tab
     assert.match(P.$("qtabs").innerHTML, /data-qtab="check" aria-selected="true"/);
@@ -368,6 +403,31 @@ test("a minor change nobody has decided loads as held and grayed out; a decided 
   });
 });
 
+test("select all in the status menu asks first when it would tick an other status; in development only goes straight through", function () {
+  var P = page(dataset());
+  return P.booted.then(function () {
+    var A = P.app.api, dlg = P.$("dialog");
+    function boxes(vals) { return vals.map(function (v) { return {value: v, checked: A.defaults().status.indexOf(v) >= 0, disabled: false}; }); }
+    var cur = boxes(["construction", "new (in-dev)", "operating"]);
+    P.ctx.document.querySelectorAll = function () { return cur; };
+    var click = function () { P.$("f-status").onclick({target: {classList: {contains: function (c) { return c === "ctoggle"; }}}, stopPropagation: function () {}}); };
+    click();
+    assert.equal(dlg.open, true);
+    assert.match(dlg.innerHTML, /not an expected part of the regular update/);
+    assert.equal(cur[2].checked, false);                          // nothing changes until Show anyway
+    P.$("dlg-ok").onclick();
+    assert.equal(cur[2].checked, false);
+    click(); P.$("dlg-show").onclick();
+    assert.ok(cur.every(function (i) { return i.checked; }));
+    assert.deepEqual(plain(A.FS.status), []);                      // every box ticked is every status
+    dlg.open = false;
+    cur = boxes(["construction", "new (in-dev)"]); cur[0].checked = false;
+    click();
+    assert.equal(dlg.open, false);                                 // only in-development boxes left to tick: no popup
+    assert.ok(cur.every(function (i) { return i.checked; }));
+  });
+});
+
 test("a plant card shows only its major changes tab until the + opens the others; the minus folds them back onto major", function () {
   var P = page(dataset());
   return P.booted.then(function () {
@@ -398,4 +458,116 @@ test("a plant card shows only its major changes tab until the + opens the others
     assert.equal(A.S.tab, "major");
     assert.doesNotMatch(html, /role="tab" data-tab="items"/);
   });
+});
+
+test("a note that names a file on the researcher's computer grays the file name and keeps its links", function () {
+  var A = page({cards: [], lines: [], items: []}).app.api;
+  var h = A.linkText("Row C01-2036 in work/pjm/pjm_cycle_queue_2026-10-21.xlsx, see https://www.pjm.com/m/ProjectTransition/SISReportDetails?queueNumber=C01-2036.");
+  assert.match(h, /<span class="localpath" title="[^"]+">work\/pjm\/pjm_cycle_queue_2026-10-21\.xlsx<\/span>,/);
+  assert.match(h, /<a href="https:\/\/www\.pjm\.com\/m\/ProjectTransition\/SISReportDetails\?queueNumber=C01-2036"/);
+  assert.doesNotMatch(h, /<a[^>]*>[^<]*localpath/);
+  assert.match(A.linkText("saved as queue.csv"), /<span class="localpath"[^>]*>queue\.csv<\/span>/);
+  assert.match(A.linkText("see /Users/bl/Desktop/x.pdf"), /localpath[^>]*>\/Users\/bl\/Desktop\/x\.pdf</);
+  assert.doesNotMatch(A.linkText("the EIA-860M table for July 2026 and the 2026 work plan"), /localpath/);
+  assert.doesNotMatch(A.linkText("https://example.com/data/queue.xlsx"), /localpath/);
+});
+
+// a plant-level location line: the point moved from an approximate to an exact one read off a georeferenced map
+function locLine(image) {
+  return line("L1", "L1:plant:location", {kind: "plant", column: "Latitude", proposed: "43.15486, -83.62508",
+    location: {method: "map", moved_m: 54600, current: {lat: 43.62, lon: -83.84, accuracy: "approximate"}, proposed: {lat: 43.15486, lon: -83.62508, accuracy: "exact"},
+               image: image, control_points: [{feature: "grid corner 285400 m east", px: [287, 318], lat: 43.16391, lon: -83.63982}], fit_m: 0.1}});
+}
+var ASSET = new Array(65).join("a") + ".jpg";
+var RENDER = {role: "render", caption: "saved map render", asset: ASSET, path: "batches/us-mi/staging/maps/L1.jpg", width: 1400, height: 1000};
+
+test("a location line's saved map render is an artifact asset: the /asset/ copy on the loopback server, the upload's url on the artifact page, a notice when that page has none yet", function () {
+  var d = dataset(); d.plants[0].lines.push(locLine(RENDER));
+  var P = page(d);
+  return P.booted.then(function () {
+    var html = showCard(P, "L1", true);
+    assert.match(html, new RegExp('<div class="mapimg"><div class="rimgs"><figure class="rimg"><img loading="lazy" src="/asset/' + ASSET + '" alt="saved map render" width="1400" height="1000" data-rzoom="1"'));
+    assert.match(html, /<figcaption>saved map render<\/figcaption>/);
+    assert.match(html, /grid corner 285400 m east<\/td><td>287, 318<\/td><td>43.16391, -83.63982/);
+    assert.match(html, /fit error 0.1 m/);
+    assert.doesNotMatch(html, /batches\/us-mi/);                        // the repo path never reaches the page
+    var d2 = dataset(); d2.plants[0].lines.push(locLine(Object.assign({url: "/_blob/abc123"}, RENDER)));
+    var S = page(d2);
+    return S.booted.then(function () {
+      S.ctx.REVIEW_STATIC = {};                                         // the artifact page
+      assert.match(showCard(S, "L1", true), /<img loading="lazy" src="\/_blob\/abc123" alt="saved map render"/);
+      var d3 = dataset(); d3.plants[0].lines.push(locLine(RENDER));
+      var N = page(d3);
+      return N.booted.then(function () {
+        N.ctx.REVIEW_STATIC = {};
+        var h = showCard(N, "L1", true);
+        assert.match(h, /<div class="rimg-none">image not uploaded<\/div><figcaption>saved map render<\/figcaption>/);
+        assert.doesNotMatch(h, /<img[^>]*alt="saved map render"/);
+      });
+    });
+  });
+});
+
+// ---- question cards: the researcher's question, what was found, what to do; the note folded away (Baird 2026-10-27, docs/questions.md) ----
+var NOTE = "The study, dated February 13, 2025, adds a 430 MW combined cycle unit in 2029. I could not read the docket at https://example.com/docket/RPU-2021-0003. Synapse's comments of April 7, 2025 describe it. Nothing says the unit was dropped.";
+function qa(extra) {
+  return item("L1", "L1:G1:qa-existence-1", Object.assign({kind: "concern", concern_type: "existence", gem_unit_id: "G1", unit_name: "F701", notes: NOTE, links: [],
+    question: "", finding: "", recommendation: "", recommendation_raw: "", proposed_value: {}, validation_errors: []}, extra));
+}
+function qaCard(extra) {
+  var d = dataset();
+  d.plants[0].items.push(qa(extra));
+  var P = page(d);
+  return P.booted.then(function () { P.app.api.S.tab = "items"; return showCard(P, "L1", true); });   // the plant card draws its items on the items tab
+}
+
+test("a question card with the four parts: the question is the headline, found and suggest open the body, the note sits under a notes dropdown", function () {
+  return qaCard({question: "Is the 430 MW combined cycle unit from the 2024 study still planned?", finding: "No later filing names it. Alliant's June 30, 2026 quarterly lists only simple-cycle projects.",
+                 recommendation: "Leave the unit as announced. Check again when Alliant files a combined cycle plan."}).then(function (html) {
+    var card = /<div class="item[^"]*">[\s\S]*?<div class="icall">/.exec(html)[0];
+    assert.match(card, /<b>Is the 430 MW combined cycle unit from the 2024 study still planned\?<\/b>/);
+    assert.doesNotMatch(card, /<b>does this plant or unit exist/);
+    assert.match(card, /data-tip="does this plant or unit exist as GEM records it\? a question the researcher raised/);   // the generic heading is the chip's tooltip
+    var open = card.slice(0, card.indexOf("<details"));
+    assert.match(open, /<div class="body"><span class="k">found<\/span>No later filing names it\. Alliant/);
+    assert.match(open, /<div class="body"><span class="k">suggest<\/span>Leave the unit as announced\./);
+    assert.doesNotMatch(open, /dated February 13/);
+    var more = /<details data-more><summary>notes<\/summary>([\s\S]*?)<\/details>/.exec(card);
+    assert.ok(more, "the notes dropdown");
+    assert.match(more[1], /<span class="k">researcher notes<\/span>The study, dated February 13, 2025/);
+    assert.match(more[1], /<a href="https:\/\/example\.com\/docket\/RPU-2021-0003"/);     // links in the note stay clickable
+    assert.doesNotMatch(card, /<td>(question|finding|recommendation raw|notes)<\/td>/);   // none of the four parts repeats under all fields
+    assert.doesNotMatch(card, /two checks, one question/);
+  });
+});
+
+test("a question card without a finding (an older batch): the generic heading, the first two sentences of the note, the full note in the dropdown", function () {
+  return qaCard({recommendation: "Keep the placeholder."}).then(function (html) {
+    var card = /<div class="item[^"]*">[\s\S]*?<div class="icall">/.exec(html)[0];
+    assert.match(card, /<b>does this plant or unit exist as GEM records it\?<\/b>/);
+    var open = card.slice(0, card.indexOf("<details"));
+    assert.match(open, /<div class="body">The study, dated February 13, 2025, adds a 430 MW combined cycle unit in 2029\. I could not read the docket at <a href="https:\/\/example\.com\/docket\/RPU-2021-0003"[^<]*<\/a>\.<\/div>/);
+    assert.doesNotMatch(open, /Synapse/);
+    assert.match(open, /<span class="k">suggest<\/span>Keep the placeholder\./);
+    assert.match(card, /<details data-more><summary>notes<\/summary><div class="dtxt"><span class="k">researcher notes<\/span>The study[\s\S]*Nothing says the unit was dropped\./);
+  });
+});
+
+test("a short note opens whole and gets no dropdown; a merged question wears the two-checks chip", function () {
+  return qaCard({notes: "Two sources agree. Nothing to add.", recommendation: "Keep it.", merged_from: "L1:plant:qa-existence-1"}).then(function (html) {
+    var card = /<div class="item[^"]*">[\s\S]*?<div class="icall">/.exec(html)[0];
+    assert.match(card, /<div class="body">Two sources agree\. Nothing to add\.<\/div>/);
+    assert.doesNotMatch(card, /data-more/);
+    assert.match(card, /two checks, one question/);
+    assert.match(card, /data-tip="the statewide plan check asked this at plant level too\. That record \(L1:plant:qa-existence-1\)/);
+    assert.doesNotMatch(card, /<td>merged from<\/td>/);
+  });
+});
+
+test("the sentence cut keeps abbreviations and numbers together and falls back to a word boundary on a run-on note", function () {
+  var A = page({cards: [], lines: [], items: []}).app.api;
+  assert.deepEqual(plain(A.leadOf("Filed by Mr. Smith on Feb. 13. The U.S. docket is open. A third sentence.", 2)), {text: "Filed by Mr. Smith on Feb. 13. The U.S. docket is open.", cut: true});
+  assert.deepEqual(plain(A.leadOf("One sentence only", 2)), {text: "One sentence only", cut: false});
+  var long = new Array(60).join("word, more words and no period "), r = A.leadOf(long, 2);
+  assert.ok(r.cut && r.text.length <= 481 && /\S…$/.test(r.text), r.text.length + " " + r.text.slice(-10));
 });

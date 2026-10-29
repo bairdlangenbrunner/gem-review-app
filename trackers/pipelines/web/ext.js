@@ -724,19 +724,22 @@
                 ["u", "undo: the change goes back to undecided"], ["o", "open the change's first ref (new tab)"], ["d", "show / hide the change's details"],
                 ["/", "search"], ["?", "this help"]];
     // "how to": a plain-language page on what the app shows and what each call does; the README holds the detail
-    var INFO_HTML =
-      "<h3>how this works</h3>" +
+    function info(savedWhere) {
+      return "<h3>how this works</h3>" +
       "<p>This app shows <b>proposed changes</b> to the GEM pipeline backend sheet (GOIT oil, GGIT gas). " +
       "Nothing here is in the backend yet. Your job is to say yes or no to each one.</p>" +
       "<h4>what you see</h4>" +
       "<ul>" +
-      "<li><b>Left list:</b> pipelines with something to decide. Click one to open it.</li>" +
+      "<li><b>Left list:</b> pipelines with something to decide. Click one to open it. The <b>gas</b> and <b>oil</b> buttons and the country buttons at the top pick which pipelines are listed.</li>" +
       "<li><b>Card:</b> that pipeline's proposed <b>changes</b>, one per cell. Each change shows the cell as it is <b>now</b> and the <b>proposed</b> value, " +
       "plus the source links (refs) that back it.</li>" +
       "<li><b>Major / minor:</b> a <b>major change</b> moves a data point: it fills a blank, clears a value the sources do not support, changes a value, " +
       "or is a status, route or new-row decision. A <b>minor change</b> leaves the value exactly as it is and only adds (or re-checks) source links. " +
-      "The card opens on the major changes; the minor ones have their own tab and an <b>accept all minor changes</b> button.</li>" +
-      "<li><b>Color:</b> green means well sourced, yellow means one source or partial, and red means weak. Green changes default to accept; the rest default to hold.</li>" +
+      "The card opens on the major changes. The minor ones have their own tab, and <b>everything</b> shows both.</li>" +
+      "<li><b>Accept buttons on the card:</b> <b>accept all minor changes</b>, <b>accept all high-conf changes</b> and <b>accept all changes</b> accept every undecided change of that kind on the pipeline that the filters show. A rival candidate is always left for you to decide by hand.</li>" +
+      "<li><b>Color:</b> green means well sourced, yellow means one source or partial, and red means weak. <b>unrated</b> means no rating. Green changes default to accept; the rest default to hold.</li>" +
+      "<li><b>Filters:</b> decision, kind (what the change does), severity (major or minor) and search sit in the bar at the top. <b>more filters</b> holds class, column, batch, confidence and decided by, and <b>reset</b> clears them all. " +
+      "<b>hide done</b> drops the pipelines with nothing left to decide, and <b>hide with items</b> drops the ones that have items.</li>" +
       "<li><b>Items</b> tab: concerns and notes the researcher raised. They take a call and a note, but they never write to the sheet.</li>" +
       "</ul>" +
       "<h4>your four calls</h4>" +
@@ -748,7 +751,7 @@
       "</ul>" +
       "<h4>what happens when you accept</h4>" +
       "<ol>" +
-      "<li>Your click is saved at once in the decision log. The backend sheet is <b>not</b> touched at that moment.</li>" +
+      "<li>Your click is saved at once in the decision log" + savedWhere + ". The backend sheet is <b>not</b> touched at that moment.</li>" +
       "<li>Later, a <b>push</b> takes every accepted change and writes it into the backend sheet, cell by cell.</li>" +
       "<li>A new ref is <b>added next to</b> the refs already in the cell. It never replaces one.</li>" +
       "<li>A value goes in only if the cell still looks like the <b>now</b> side. If the sheet changed since you decided, the change is flagged and skipped until someone re-checks it.</li>" +
@@ -760,8 +763,10 @@
       "<li>A <b>rival candidate</b> means a concern on this pipeline proposes a different value for the same cell. It is shown under the proposal. " +
       "<b>accept</b> takes the proposal and closes the concern, while <b>accept candidate</b> takes the concern's value instead (it goes to the research list, like a suggest) and confirms the concern.</li>" +
       "<li>A grayed change is already decided or already in the backend. A bright change still needs you.</li>" +
+      "<li><b>theme</b> and the half-circle button change the page's colors.</li>" +
       "<li>Press <kbd>?</kbd> for the keyboard shortcuts.</li>" +
       "</ul>";
+    }
 
     var CONF = "confidence level (rule 4)";
     return {
@@ -1154,7 +1159,7 @@
       // ---- keys, help, info ----
       keys: {c: function () { if (S.tab !== "items") acceptCandidate(A.LINES[S.line], null, true); }},
       help: function () { return HELP; },
-      info: INFO_HTML,
+      info: info,
 
       // ---- lifecycle ----
       onBoot: function (d) {

@@ -73,7 +73,7 @@ table.pair td { white-space: pre-wrap; }
 .loc .cap { font-size: 13px; margin-top: 6px; }
 .loc .attr { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .loc .mapimg { margin-top: 8px; }
-.loc .mapimg img { max-width: 240px; max-height: 180px; border: 1px solid var(--line); }
+.loc .mapimg .rimgs { margin: 0 0 4px; }          /* the shared image block (review_core/web/style.css .rimg), flush with the panes */
 .loc .cpts { border-collapse: collapse; font-size: 12px; margin-top: 4px; }
 .loc .cpts th, .loc .cpts td { border: 1px solid var(--line); padding: 2px 6px; text-align: left; }
 /* the database's validation report error a line or an item answers */
@@ -82,19 +82,21 @@ table.pair td { white-space: pre-wrap; }
 /* the status menu: a group box over its statuses */
 #f-status .sgroup { margin-top: 2px; }
 #f-status .schild { padding-left: 18px; }
+#f-status .ssep { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line, #ccc); }   /* divider between in development and everything below it */
 /* country, state and status read as one group: only the last visible one keeps the divider and its padding */
 #f-country:has(~ #f-state:not([hidden]), ~ #f-status:not([hidden])), #f-state:has(~ #f-status:not([hidden])) { border-right: 0; padding-right: 0; }
 #f-status .none, #f-status .schild.none { color: var(--muted); opacity: .55; }
 #f-status summary .n { font-size: 12px; color: var(--muted); }
 /* a plant with no suggested changes: the one "checked" line and its unit table */
 .line .checked-say { margin: 6px 0 8px; max-width: 70em; }
-/* the table never shrinks below 46em: narrower than that, its box scrolls sideways instead of the columns crushing into each other */
+/* the table never shrinks below 50em: narrower than that, its box scrolls sideways instead of the columns crushing into each other */
 .line .units-wrap { overflow-x: auto; max-width: 100%; }
-table.pair.units { min-width: 46em; }
+table.pair.units { min-width: 50em; }
 table.pair.units th { font-weight: 600; font-size: 12.5px; color: var(--muted); text-align: left; }
-/* its own column widths: the shared pair table gives the fourth column 5.5em, too narrow for a date, so last updated ran into researcher; researcher needs room for a full name, or it ran into research status */
-table.pair.units th:nth-child(1) { width: 24%; } table.pair.units th:nth-child(2) { width: 14%; } table.pair.units th:nth-child(3) { width: 8em; }
-table.pair.units th:nth-child(4) { width: 7.5em; } table.pair.units th:nth-child(5) { width: 11em; } table.pair.units th:nth-child(6) { width: auto; }
+/* its own column widths: the shared pair table gives the fourth column 5.5em, too narrow for a date, so last updated ran into researcher; researcher needs room for a full name, or it ran into research status.
+   The fixed widths are in rem, not em: the header font is smaller than the body font, so an em width on the header came out narrower than the same em in the cells and a full date (2026-10-27) was clipped to its first characters */
+table.pair.units th:nth-child(1) { width: 24%; } table.pair.units th:nth-child(2) { width: 14%; } table.pair.units th:nth-child(3) { width: 6.5rem; }
+table.pair.units th:nth-child(4) { width: 7.5rem; } table.pair.units th:nth-child(5) { width: 9rem; } table.pair.units th:nth-child(6) { width: auto; }
 /* numbers and dates stay on one line and are clipped if the column is ever too narrow; the text columns (unit, status, researcher, research status) wrap, so nothing spills into the next cell */
 table.pair.units td:nth-child(3), table.pair.units td:nth-child(4) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* a unit not in development (operating, retired, mothballed and so on) needs no bookkeeping, so its row is grayed out */

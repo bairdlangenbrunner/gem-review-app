@@ -39,6 +39,9 @@ button, select, input, textarea { font: inherit; color: inherit; }
 button { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 12px; min-height: 32px; cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button.ghost { border-color: transparent; background: none; }
+/* the header's record-issues link looks like the ghost buttons beside it */
+a.ghost { color: inherit; text-decoration: none; font-size: 14px; padding: 4px 12px; min-height: 32px; box-sizing: border-box; display: inline-flex; align-items: center; border: 1px solid transparent; border-radius: 6px; }
+a.ghost:hover { border-color: var(--accent); color: var(--accent); }
 button[hidden] { display: none; }
 select, input[type=search], input[type=text], textarea {
   background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-height: 32px; max-width: 16em; }
@@ -198,11 +201,12 @@ table.pair .newv { font-size: 15px; padding: 1px 6px; }
 .line .faint { color: var(--muted); font-size: 13px; opacity: .8; }
 .line details { margin: 6px 0 2px; font-size: 14px; }
 .line details summary { cursor: pointer; color: var(--muted); width: fit-content; }
-.line details .dtxt { margin: 14px 0 0 14px; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.5; }
-.line details .dtxt:first-of-type { margin-top: 8px; }
-.line details .dtxt + .dtxt { padding-top: 14px; border-top: 1px solid var(--line); }
-.line details .dtxt .k { display: block; color: var(--ink); font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
-.line details .dtxt a { color: var(--accent); }
+/* the notes dropdown, on a line (notes & record) and on an item (the folded researcher note) */
+.dtxt { margin: 14px 0 0 14px; overflow-wrap: anywhere; white-space: pre-wrap; line-height: 1.5; }
+details .dtxt:first-of-type { margin-top: 8px; }
+.dtxt + .dtxt { padding-top: 14px; border-top: 1px solid var(--line); }
+.dtxt .k { display: block; color: var(--ink); font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 3px; }
+.dtxt a { color: var(--accent); }
 .line .controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .line .controls button { min-height: 32px; padding: 2px 14px; }
 .line .controls button[aria-disabled="true"] { opacity: .4; cursor: help; }
@@ -246,9 +250,9 @@ table.rowdata td:first-child { color: var(--muted); width: 30%; }
 .item { background: var(--panel); border: 1px solid var(--edge, var(--line)); border-radius: 8px; padding: 14px 20px; margin: 12px 0; box-shadow: 0 2px 8px rgba(0,0,0,.32); }
 .item .row1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .item .row1 .where { margin-left: auto; color: var(--muted); font-size: 14px; }
-.item .body { margin-top: 4px; overflow-wrap: anywhere; font-size: 15px; }
-.item .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden; }
-.item button.more { border: 0; background: none; min-height: 0; padding: 0; color: var(--accent); font-size: 14px; }
+.item .body { margin-top: 6px; overflow-wrap: anywhere; font-size: 15px; line-height: 1.45; }
+.item .body .k { color: var(--ink); font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; margin-right: 6px; }
+.item .body a { color: var(--accent); }
 .item details { font-size: 14px; margin-top: 4px; }
 .item details summary { cursor: pointer; color: var(--muted); width: fit-content; }
 .item.conts { border-left: 4px solid var(--t-cont-ink); }
@@ -292,9 +296,16 @@ a.only:hover { color: var(--accent); border-bottom-style: solid; }
 dialog[data-kind="summary"] { max-width: 760px; max-height: 88vh; overflow: auto; }
 dialog[data-kind="info"] { max-width: 640px; max-height: 88vh; overflow: auto; line-height: 1.45; }
 dialog[data-kind="info"] ul, dialog[data-kind="info"] ol { margin: 4px 0 8px; padding-left: 22px; }
-dialog[data-kind="info"] li { margin: 3px 0; }
+dialog[data-kind="info"] li { margin: 8px 0; }
 dialog[data-kind="info"] p { margin: 6px 0; }
-dialog h4 { margin: 12px 0 4px; font-size: 16px; }
+dialog h4 { margin: 22px 0 8px; font-size: 16px; }
+/* popup text in the theme's colors: titles in the accent, section heads a step toward the ink, list markers and keys tinted */
+dialog h3 { color: var(--accent); margin-bottom: 14px; }
+dialog h4 { color: color-mix(in srgb, var(--accent) 65%, var(--ink)); padding-bottom: 4px; border-bottom: 1px solid color-mix(in srgb, var(--accent) 25%, var(--line)); }
+dialog li::marker { color: var(--accent); }
+dialog h3::first-letter, dialog h4::first-letter { text-transform: uppercase; }   /* titles are written lowercase in the JS; shown with a capital */
+dialog[data-kind="info"] b { color: color-mix(in srgb, var(--accent) 35%, var(--ink)); }
+dialog kbd { background: var(--sel); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
 .sumtab { border-collapse: collapse; font-size: 16px; }
 .sumtab th, .sumtab td { padding: 2px 14px 2px 0; text-align: left; }
 .sumtab td.num, .sumtab th:not(:first-child) { text-align: right; }
@@ -628,3 +639,5 @@ button.copybtn:hover, button.copybtn:focus-visible { opacity: 1; color: var(--ac
 
 /* header buttons kept wired but not shown for now (export-btn, progress-btn) */
 .parked { display: none !important; }
+/* a file on the researcher's own computer named in a note: nobody else can open it */
+.localpath { color: var(--muted, #888); background: var(--chip, rgba(128,128,128,.12)); border-radius: 3px; padding: 0 3px; text-decoration: underline dotted; cursor: help; }

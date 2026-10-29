@@ -8,7 +8,7 @@
     var $ = A.$, esc = A.esc, linkText = A.linkText, chip = A.chip, tipAttrs = A.tipAttrs, blankv = A.blankv, cur = A.cur, S = A.S;
     var ROW_LABEL = {};        // checklist row number -> its label (from the dataset's groups)
     var VIEW = "plants";       // the left pane: "plants" (the queue) or "checklist" (the QC/Country checklist groups)
-    var QTAB = "suggestions";  // the queue tab: "suggestions" (tracked plants with something proposed: edits, items, new units, watch), "check" (plants the batch proposed nothing for) or "new" (plants GEM does not track yet)
+    var QTAB = "suggestions";  // the queue tab: "suggestions" (tracked plants with something proposed: edits, items, watch), "check" (plants the batch proposed nothing for) or "new" (plants GEM does not track yet and new units at tracked plants)
     try { var qt = localStorage.getItem("review-qtab"); if (qt === "check" || qt === "new") QTAB = qt; } catch (e) { /* ignore */ }
     var closeoutCopy = {};     // the close-out panel's copy buttons: units, draft
 
@@ -23,7 +23,7 @@
     // the three sections of the left list, in page order: what a card is decides where it sits (review_data.py card_kind)
     var SECTION = {plant: "plants", addition: "proposed additions", watch: "watch list"};
     var SECTION_TIP = {plant: "plants GEM tracks in this scope. On the suggestions tab: the ones with proposed cell edits, questions about existing data or owners to create. On the to check tab: the ones the batch proposed nothing for, which you mark checked once you have looked at them",
-                       addition: "new units the batch proposes, with the leads that are not ready to add yet. On the new tab: the plants GEM does not track yet",
+                       addition: "on the new tab: the plants GEM does not track yet, and the new units the batch proposes at tracked plants, with the leads that are not ready to add yet",
                        watch: "things to keep an eye on at plants GEM already tracks; nothing here changes a cell"};
     var BY_PLANT = {};         // GEM plant id -> {plant: card index, addition: card index, watch: card index}
     var TIER_TIP = {high: "green: one fully checked source (a status change needs two independent publishers)",
@@ -111,12 +111,12 @@
       var all = countries(), sel = FS().country || [];
       return sel.length ? all.filter(function (k) { return sel.indexOf(k) >= 0; }) : all;
     }
-    // the states offered: only once a country is picked (or the page covers just one), and only for countries that have states (the United States, say)
+    // the states offered, alphabetically: only once a country is picked (or the page covers just one), and only for countries that have states (the United States, say)
     function stateChoices() {
       var cs = countriesInView(), out = [];
       if (!FS().country.length && cs.length > 1) return out;
       cs.forEach(function (k) { out = out.concat(realStates(k)); });
-      return out;
+      return out.sort(function (a, b) { return a.localeCompare(b); });
     }
     // ticked values in the filter, leaving out the nothing-ticked sentinel
     function picked(v) { return (v || []).filter(function (x) { return x !== NO_COUNTRY; }); }
@@ -174,46 +174,59 @@
       var out = [];
       function add(units) { (units || []).forEach(function (u) { var v = statusBase(u.status); if (v && out.indexOf(v) < 0) out.push(v); }); }
       add(p.units);
-      // an addition or watch card with no unit rows of its own takes its plant card's statuses, so "in development" keeps a plant's other cards in view
-      if (!out.length && !untracked(p) && cardKind(p) !== "plant") {
+      // a watch card with no unit rows of its own takes its plant card's statuses, so "in development" keeps a plant's other cards in view
+      if (!out.length && !untracked(p) && cardKind(p) === "watch") {
         var at = BY_PLANT[plantId(p)], pc = at && at.plant != null ? plants()[at.plant] : null;
         if (pc) add(pc.units);
       }
       return out;
     }
-    // the page opens on the plants in development (plus the plants new to the database): the rest is under "other statuses" in the status menu, off until ticked
-    function devDefault() { return DEV_LABEL.concat([NEW_STATUS]); }
+    // the page opens on the plants in development (plus the new plants proposed in development): the rest is under "other statuses" and "new (other)" in the status menu, off until ticked
+    function devDefault() { return DEV_LABEL.concat([NEW_DEV]); }
     function isDefaultStatus(sel) { return sel.map(statusKey).sort().join("|") === devDefault().map(statusKey).sort().join("|"); }
     // every status on the page: in development first (all five, announced to shelved, in that order), then the rest alphabetically (the known ones too); a status the page has no plant in is left out of `have` and shows grayed out
     function statusChoices() {
       var seen = {}, all = [];
-      plants().forEach(function (p) { statusesOf(p).forEach(function (s) { if (!seen[statusKey(s)]) { seen[statusKey(s)] = s; all.push(s); } }); });
+      plants().forEach(function (p) { if (!byProposal(p)) statusesOf(p).forEach(function (s) { if (!seen[statusKey(s)]) { seen[statusKey(s)] = s; all.push(s); } }); });
       var dev = DEV_STATUS.map(function (k, i) { return seen[k] || DEV_LABEL[i]; });
       var rest = all.filter(function (s) { return !isDev(s); });
       REST_LABEL.forEach(function (l) { if (!seen[statusKey(l)]) rest.push(l); });
       rest.sort(function (a, b) { return a.localeCompare(b); });
       return {dev: dev, rest: rest, have: all};
     }
-    // "new to database": the plants GEM does not track yet (a card with no plant id), which have no current status to filter on
-    var NEW_STATUS = "new to database";
+    // the addition cards (a plant GEM does not track yet, or new units proposed at a tracked plant) filter on the statuses their new rows and leads propose, not on the plant's current status:
+    // "new (in-dev)" when any proposed status is in development (shelved included) or none is given, "new (other)" when every one is outside it (operating, retired and so on).
+    // So a new unit row that is already operating, such as a 1968 peaker missing from GEM, stays off the default view (Baird 2026-10-27)
+    var NEW_DEV = "new (in-dev)", NEW_OTHER = "new (other)";
+    function byProposal(p) { return untracked(p) || cardKind(p) === "addition"; }
+    function isNew(s) { return s === NEW_DEV || s === NEW_OTHER; }
+    function newStatusOf(p) {
+      var ss = [];
+      p.lines.forEach(function (l) {
+        if (l.kind !== "new_row") return;
+        [l.proposed_values || {}].concat((l.units || []).map(function (u) { return u.fields || {}; })).forEach(function (f) { if (f.Status) ss.push(f.Status); });
+      });
+      p.items.forEach(function (it) { if (it.status) ss.push(it.status); });
+      return !ss.length || ss.some(isDev) ? NEW_DEV : NEW_OTHER;
+    }
     function statusOn(p, sel) {
-      if (untracked(p)) return sel.indexOf(NEW_STATUS) >= 0;
+      if (byProposal(p)) return sel.indexOf(newStatusOf(p)) >= 0;
       var ss = statusesOf(p);
       if (!ss.length) return !(sel.length === 1 && sel[0] === NO_COUNTRY);     // a card whose status the page does not know stays in view unless every box is unticked
       return ss.some(function (s) { return sel.some(function (x) { return statusKey(x) === statusKey(s); }); });
     }
-    // the status menu in the bar: an "in development" box that ticks its five statuses together, each with its live count, then "new to database".
-    // The other statuses (operating, retired, cancelled and so on) sit in the same menu under an "other statuses" box, off by default
+    // the status menu in the bar: an "in development" box that ticks its five statuses together, each with its live count, then "new (in-dev)".
+    // Below a divider, the other statuses (operating, retired, cancelled and so on) sit under an "other statuses" box, then "new (other)" at the very bottom, all off by default
     function renderStatus() {
       var box = $("f-status");
       if (!box) return;
-      var fs = FS(), q = fs.q.trim().toLowerCase(), ch = statusChoices(), hasNew = plants().some(untracked), all = ch.have.concat(hasNew ? [NEW_STATUS] : []), sel = fs.status || [], n = sel.length, counts = {};
+      var fs = FS(), q = fs.q.trim().toLowerCase(), ch = statusChoices(), news = plants().filter(byProposal).map(newStatusOf), all = ch.have.concat([NEW_DEV, NEW_OTHER].filter(function (s) { return news.indexOf(s) >= 0; })), sel = fs.status || [], n = sel.length, counts = {};
       var was = box.querySelector("details"), open = was && was.open;
       box.hidden = !all.length;
       if (box.hidden) return;
       all.forEach(function (s) { counts[s] = 0; });
       plants().forEach(function (p) {
-        var mine = untracked(p) ? [statusKey(NEW_STATUS)] : statusesOf(p).map(statusKey);
+        var mine = byProposal(p) ? [statusKey(newStatusOf(p))] : statusesOf(p).map(statusKey);
         p.lines.concat(p.items).forEach(function (o) {
           if (!A.match(o, p, fs, "status", q)) return;
           all.forEach(function (s) { if (mine.indexOf(statusKey(s)) >= 0) counts[s]++; });
@@ -227,11 +240,16 @@
         return '<label class="check sgroup"' + tipAttrs(tip) + '><input type="checkbox" data-group="' + id + '"' + (have.length ? "" : " disabled") + (have.length && k === have.length ? " checked" : "") + (k && k < have.length ? ' data-partial="1"' : "") + "> <b>" + label + "</b></label>" +
           xs.map(function (s) { var ok = avail(s); return '<label class="check schild' + (ok ? "" : " none") + '"' + (ok ? "" : tipAttrs("no plant on this page has this status")) + '><input type="checkbox" value="' + esc(s) + '"' + (ok ? "" : " disabled") + (on(s) ? " checked" : "") + "> " + esc(s) + " (" + (counts[s] || 0) + ")</label>"; }).join("");
       }
-      var restOn = ch.rest.filter(on).length;
+      function newBox(s, tip, cls) {
+        var ok = news.indexOf(s) >= 0;
+        return '<label class="check sgroup' + cls + (ok ? "" : " none") + '"' + tipAttrs(ok ? tip : "no plant like this on this page") + '><input type="checkbox" value="' + esc(s) + '"' + (ok ? "" : " disabled") + (on(s) ? " checked" : "") + "> <b>" + esc(s) + " (" + (counts[s] || 0) + ")</b></label>";
+      }
+      var restOn = ch.rest.concat([NEW_OTHER]).filter(on).length;
       box.innerHTML = '<details class="cdrop"' + (open ? " open" : "") + '><summary>status' + (restOn ? ' <span class="n">+' + restOn + "</span>" : "") + '</summary><div class="cmenu"><button type="button" class="ctoggle">' + (!n || picked(sel).length === all.length ? "deselect all" : "select all") + "</button>" +
         group("dev", "in development", "announced, pre-construction, construction, shelved and shelved-inferred: the plants the update is about", ch.dev) +
-        '<label class="check sgroup' + (hasNew ? "" : " none") + '"' + tipAttrs(hasNew ? "plants GEM does not track yet: the new plants this page proposes adding" : "no new plant on this page") + '><input type="checkbox" value="' + NEW_STATUS + '"' + (hasNew ? "" : " disabled") + (on(NEW_STATUS) ? " checked" : "") + "> <b>" + NEW_STATUS + " (" + (counts[NEW_STATUS] || 0) + ")</b></label>" +
-        group("rest", "other statuses", "every status outside in development: operating, retired, cancelled and so on. Off by default, so the page stays on the plants the update is about", ch.rest) + "</div></details>";
+        newBox(NEW_DEV, "new plants and new units this page proposes adding as in development (shelved included), or with no status given", "") +
+        group("rest", "other statuses", "every status outside in development: operating, retired, cancelled and so on. Off by default, so the page stays on the plants the update is about", ch.rest).replace('class="check sgroup"', 'class="check sgroup ssep"') +
+        newBox(NEW_OTHER, "new plants and new units this page proposes adding with a status outside in development, such as operating or retired. Off by default", "") + "</div></details>";
       Array.prototype.forEach.call(box.querySelectorAll("input[data-partial]"), function (i) { i.indeterminate = true; });
     }
     // header: the ticked countries as boxes, alphabetical, then the ticked states whenever the state menu shows, then the plant count.
@@ -298,7 +316,8 @@
       return A.LINES.concat(A.ITEMS).filter(function (o) { return o.pm_flag; }).length + plants().filter(function (p) { return p.pm_flag; }).length;
     }
     // ---- the queue tabs: suggestions | to check | new ----
-    function qtabOf(p) { return untracked(p) && !p.statewide ? "new" : noChanges(p) ? "check" : "suggestions"; }
+    // the new tab holds every addition card, so it matches "new (in-dev)" and "new (other)" in the status menu: plants GEM does not track yet and new units proposed at a tracked plant (Baird 2026-10-29)
+    function qtabOf(p) { return byProposal(p) && !p.statewide ? "new" : noChanges(p) ? "check" : "suggestions"; }
     function setQtab(t) {
       QTAB = t;
       try { localStorage.setItem("review-qtab", t); } catch (e) { /* ignore */ }
@@ -314,8 +333,8 @@
         t.n++;
         if (!done) t.open++;
       });
-      var tip = {suggestions: "plants GEM tracks with proposed edits, questions or owners to create, then their proposed new units and the watch list",
-                 new: "plants GEM does not track yet that the batch proposes adding",
+      var tip = {suggestions: "plants GEM tracks with proposed edits, questions or owners to create, then the watch list",
+                 new: "plants GEM does not track yet that the batch proposes adding, and new units proposed at plants GEM already tracks",
                  check: "plants the batch proposed nothing for: look each one over, set its Last Updated and Research status in the database, then mark it checked"};
       box.innerHTML = [["suggestions", "suggestions"], ["check", "to check"], ["new", "new"]].map(function (t) {
         var k = c[t[0]];
@@ -450,8 +469,12 @@
       var h = '<div class="loc"><div class="panes">' + locPane("now", cur) + locPane("proposed", pro) + "</div>" +
         '<div class="cap">' + cap.filter(Boolean).map(esc).join(", ") + "</div>" +
         '<div class="attr">' + esc(ESRI_ATTRIBUTION) + "</div>";
-      if (loc.image) {
-        h += '<div class="mapimg"><a href="' + esc(loc.image) + '" target="_blank" rel="noopener"><img loading="lazy" alt="saved map render" src="' + esc(loc.image) + '"></a>';
+      // the saved map render is an artifact asset ({role, caption, asset, url, path, width, height}; review_core/assets.py), drawn by the shared image block:
+      // the loopback server's /asset/ copy, the upload's url on the artifact page, or "image not uploaded" while that page has none (click opens it full size)
+      var img = loc.image;
+      if (typeof img === "string") img = img ? {url: img, caption: "saved map render"} : null;   // an older dataset's bare repo path
+      if (img) {
+        h += '<div class="mapimg">' + window.ReviewGeo.imageBlock([img]);
         var cps = loc.control_points || [];
         if (cps.length) {
           h += '<table class="cpts"><tr><th>feature</th><th>pixel</th><th>lat, lon</th></tr>' + cps.map(function (c) {
@@ -583,6 +606,10 @@
     }
 
     // ---- items ----
+    // two agents asked the same question (the plant's own check and the statewide plan check): the assembler folded the second into this record
+    function mergedChip(it) {
+      return chip("two checks, one question", "", "the statewide plan check asked this at plant level too. That record (" + it.merged_from + ") was folded into this one; its finding is in the notes");
+    }
     function concernHead(it) {
       var t = String(it.concern_type || "concern");
       if (CONCERN_ISSUE[t]) return CONCERN_ISSUE[t];
@@ -803,9 +830,9 @@
         "Nothing here is in the GEM database yet, and nothing on this page can write to it. Your job is to say yes or no to each edit.</p>" +
         "<h4>what you see</h4>" +
         "<ul>" +
-        "<li><b>Left list:</b> every plant in this scope, on three tabs. <b>Suggestions</b> holds everything the batch proposed for plants GEM tracks, in three sections. <b>Plants</b>: one card per tracked plant the batch proposes changes for, with its questions and owners to create. " +
-        "<b>Proposed additions</b>: one \"new units at\" card per tracked plant with new unit rows or leads. <b>Watch list</b>: one card per tracked plant with something to keep an eye on. " +
-        "<b>To check</b> holds the plants the batch proposed nothing for. Each shows one line, <b>no suggested changes</b>: look the plant over, set its Last Updated and Research status in the database, then mark it <b>checked</b> (or <b>hold for later</b>). That is how the page can say every plant was looked at. <b>New</b> holds one card per plant GEM does not track yet that the batch proposes adding. " +
+        "<li><b>Left list:</b> every plant in this scope, on three tabs. <b>Suggestions</b> holds the batch's changes to plants GEM tracks, in two sections. <b>Plants</b>: one card per tracked plant the batch proposes changes for, with its questions and owners to create. " +
+        "<b>Watch list</b>: one card per tracked plant with something to keep an eye on. " +
+        "<b>To check</b> holds the plants the batch proposed nothing for. Each shows one line, <b>no suggested changes</b>: look the plant over, set its Last Updated and Research status in the database, then mark it <b>checked</b> (or <b>hold for later</b>). That is how the page can say every plant was looked at. <b>New</b> holds everything the batch proposes adding: one card per plant GEM does not track yet, and one \"new units at\" card per tracked plant with new unit rows or leads. " +
         "A plant can have a card in each section; the cards link to each other. Click a card to open it.</li>" +
         "<li><b>Card:</b> a plant's proposed changes, one per cell, grouped by unit. Each change shows the cell as it is <b>now</b> and the <b>proposed</b> value, " +
         "plus the source links that back it. A new link is <b>added next to</b> the links already in the Data Source cell. It never replaces one. " +
@@ -816,11 +843,14 @@
         "A <b>minor change</b> means the value stands and only a source link is added (the value was checked again, or the cell already has a link), or the edit is to Status Detail. " +
         "The card opens on the major changes tab. The <b>+</b> next to it opens the <b>minor changes</b>, <b>items</b> and <b>everything</b> tabs, after a reminder that they are not an expected part of the regular update (<b>Show anyway</b> opens them, <b>OK, I understand</b> leaves them folded), and the <b>&minus;</b> folds them away again. A minor change carries a <b>minor</b> chip; major changes, the common case, carry none. A minor change loads as <b>held</b> and grayed out until you accept or reject it.</li>" +
         "<li><b>Color:</b> green means one fully checked source (a status change needs two independent publishers), yellow means one source or a partial match, and red means weak. " +
-        "Green changes default to accept; the rest default to hold.</li>" +
+        "<b>unrated</b> means no rating. Green changes default to accept; the rest default to hold.</li>" +
         "<li><b>Plant-wide:</b> a plant-level field such as the location or the owner is repeated on every unit row, so one accept covers all of them.</li>" +
         "<li><b>Items</b> tab: questions the researcher raised, plants and projects to watch, and owners or operators to create. They take a call and a note, but they never change a cell.</li>" +
         "<li><b>Checklist:</b> every change and item is sorted into one of the groups of the GOGPT QC/Country checklist (the dashed chip with the group's name, such as \"status and timeline\"; hover it for the rows it ticks). " +
-        "The <b>checklist</b> dropdown in the filters shows one group at a time, decided or not.</li>" +
+        "The <b>checklist</b> menu under <b>more filters</b> shows one group at a time, decided or not.</li>" +
+        "<li><b>Validation report:</b> a gray box headed <b>The database's validation report says</b> means the change answers an error on GEM's validation report. A <b>validation fix</b> chip means it carries a value and a source: accept it and the value is typed into the web form.</li>" +
+        "<li><b>Filters:</b> the <b>country</b>, <b>state</b> and <b>status</b> menus, decision and search sit in the bar at the top. <b>ask the PM</b> shows only what was flagged for the PM, and <b>data centers only</b> keeps the plants tied to a gas-fired data center. " +
+        "<b>more filters</b> holds kind, checklist, attribute, batch, confidence and decided by, and <b>reset</b> clears them all. <b>hide done</b> drops the plants with nothing left to decide.</li>" +
         "</ul>" +
         "<h4>your four calls</h4>" +
         "<ul>" +
@@ -859,6 +889,7 @@
         "<ul>" +
         "<li><b>Undo:</b> click the pressed button again, or press <kbd>u</kbd>. Nothing is deleted; the log just records the undo. Unticking <b>ask the PM</b> works the same way.</li>" +
         "<li>A grayed change is already decided or held. A bright change still needs you.</li>" +
+        "<li><b>theme</b> and the half-circle button change the page's colors.</li>" +
         "<li>Press <kbd>?</kbd> for the keyboard shortcuts.</li>" +
         "</ul>";
     }
@@ -892,7 +923,11 @@
       kind_label: KIND_LABEL,
       kind_tip: KIND_TIP,
       kindLabel: function (o, KL) { return o.kind === "monitor" ? (isLead(o) ? LEAD_LABEL[o.lead_for] : MONITOR_LABEL[o.monitor_kind] || KL.monitor) : (KL[o.kind] || o.kind); },
-      kindTip: function (o, KT) { return o.kind === "monitor" ? (isLead(o) ? KT.lead : KT[o.monitor_kind]) || "" : KT[o.kind] || ""; },
+      kindTip: function (o, KT) {
+        if (o.kind === "monitor") return (isLead(o) ? KT.lead : KT[o.monitor_kind]) || "";
+        if (o.kind === "concern" && o.question) return concernHead(o) + " " + KT.concern;   // the generic heading moves to the chip when the question is the headline
+        return KT[o.kind] || "";
+      },
       call_label: {add_to_database: "incorporate into database", hold: "hold", possible_updates: "send to possible updates", research_further: "research further", remove: "remove from watchlist", needs_research: "needs research"},
       call_help: {add_to_database: "this belongs in GEM now: the researcher turns it into a full edit (a new row or a change) for the next batch",
                   hold: "not sure yet, leave it on the watchlist", possible_updates: "goes on the possible-updates sheet for a later cycle",
@@ -904,7 +939,7 @@
       sev_tip: {major: "major change: a cell value moves. A blank is filled, a value is changed or cleared, a plant-wide field is set, or a row is added",
                 minor: "minor change: the value stands and only a source link is added (it was checked again, or the cell already has a link), or the edit is to Status Detail"},
       tier_tip: TIER_TIP,
-      hideFields: ["gem_unit_id", "unit_name", "group", "group_label", "checks", "monitor_kind", "lead_for", "pm_flag", "pm_note", "pm_by", "duplicate_of", "concern_type_raw", "plant_name", "validation_errors", "validation_fix", "proposed_value", "ready"],
+      hideFields: ["gem_unit_id", "unit_name", "group", "group_label", "checks", "monitor_kind", "lead_for", "pm_flag", "pm_note", "pm_by", "duplicate_of", "concern_type_raw", "plant_name", "validation_errors", "validation_fix", "proposed_value", "ready", "question", "finding", "merged_from", "recommendation_raw"],
       itemFacets: ["group"],
       store: {flag: "/api/flag"},
       QK: {decision: "d", kind: "k", group: "g", tier: "t", dir: "dir", column: "col", q: "q", country: "c", state: "st", status: "sts", dc: "dc", by: "by", captive: "cap", pm: "pm"},
@@ -990,9 +1025,12 @@
           if (!e.target.classList.contains("ctoggle")) return;
           e.stopPropagation();
           var boxes = statusBoxes(), allOn = boxes.every(function (i) { return i.checked; });
-          boxes.forEach(function (i) { i.checked = !allOn; });
-          setStatus();
+          function apply() { statusBoxes().forEach(function (i) { i.checked = !allOn; }); setStatus(); }
+          // "select all" ticks the other statuses too, so it asks first the way ticking one of them does
+          if (!allOn && boxes.some(function (i) { return !i.checked && isOther(i.value); })) { confirmOther(apply); return; }
+          apply();
         };
+        function isOther(v) { return !!v && v !== NEW_DEV && !isDev(v); }
         // ticking a status outside in development (the "other statuses" box or one of its statuses) changes nothing until the researcher clicks "Show anyway"; "OK, I understand" or closing the popup leaves the filter as it was
         function confirmOther(redo) {
           var dlg = $("dialog");
@@ -1008,18 +1046,18 @@
           var t = group ? sbox.querySelector('input[data-group="' + group + '"]') : Array.prototype.filter.call(sbox.querySelectorAll("input[value]"), function (i) { return i.value === value; })[0];
           if (!t || t.disabled) return;
           t.checked = true;
-          if (group) Array.prototype.forEach.call(sbox.querySelectorAll("input[value]:not(:disabled)"), function (i) { if (i.value !== NEW_STATUS && isDev(i.value) === (group === "dev")) i.checked = true; });
+          if (group) Array.prototype.forEach.call(sbox.querySelectorAll("input[value]:not(:disabled)"), function (i) { if (!isNew(i.value) && isDev(i.value) === (group === "dev")) i.checked = true; });
           setStatus();
         }
         sbox.onchange = function (e) {
           var g = e.target.getAttribute("data-group"), v = e.target.value;
-          var other = g ? g === "rest" : v && v !== NEW_STATUS && !isDev(v);
+          var other = g ? g === "rest" : isOther(v);
           if (other && e.target.checked) {
             renderStatus();     // the tick is not applied: draw the menu from the filter as it still is
             confirmOther(function () { tickStatus(g, v); });
             return;
           }
-          if (g) Array.prototype.forEach.call(sbox.querySelectorAll("input[value]:not(:disabled)"), function (i) { if (i.value !== NEW_STATUS && isDev(i.value) === (g === "dev")) i.checked = e.target.checked; });
+          if (g) Array.prototype.forEach.call(sbox.querySelectorAll("input[value]:not(:disabled)"), function (i) { if (!isNew(i.value) && isDev(i.value) === (g === "dev")) i.checked = e.target.checked; });
           setStatus();
         };
         $("f-dc").onchange = function () { FS().dc = this.checked; A.changed(); };
@@ -1044,17 +1082,17 @@
       activeChips: function (chipFn, when) {
         var fs = FS();
         if (when === "before") {
-          // the status filter differs from its default (in development plus new to database): a chip says how
+          // the status filter differs from its default (in development plus new in development): a chip says how
           var sel = fs.status || [];
           if (!isDefaultStatus(sel)) {
-            var text, rest = sel.filter(function (x) { return x !== NO_COUNTRY && x !== NEW_STATUS && !isDev(x); });
+            var text, rest = sel.filter(function (x) { return x !== NO_COUNTRY && !isNew(x) && !isDev(x); });
             if (!sel.length) text = "status: all";
             else if (sel.length === 1 && sel[0] === NO_COUNTRY) text = "status: none";
             else {
               var dev = sel.filter(isDev), parts = [];
               if (dev.length === DEV_LABEL.length) parts.push("in development"); else parts = parts.concat(dev.map(statusBase));
               parts = parts.concat(rest);
-              if (sel.indexOf(NEW_STATUS) >= 0) parts.push(NEW_STATUS);
+              [NEW_DEV, NEW_OTHER].forEach(function (s) { if (sel.indexOf(s) >= 0) parts.push(s); });
               text = "status: " + parts.join(", ");
             }
             chipFn("status", text, false);
@@ -1219,7 +1257,8 @@
       // ---- items ----
       itemHead: function (it) {
         switch (it.kind) {
-          case "concern": return concernHead(it);
+          // the researcher's own question when the record carries one; else the generic heading for its concern type
+          case "concern": return it.question || concernHead(it);
           // the recheck date is bookkeeping for the next batch, not for the reviewer; it stays out of the page
           case "monitor": return it.reason || it.item || "watch this plant";
           case "entity": return (it.entity_name || "entity") + (it.role ? " as " + it.role : "");
@@ -1231,7 +1270,7 @@
       kindClass: function (it) { return it.kind === "monitor" ? "watch" : ""; },
       itemChips: function (it) {
         return (isLead(it) ? chip("lead", "lead", "not enough yet to write the row; research further puts it on the next batch's briefs") + " " : "") +
-          groupChip(it) + (it.irp ? " " + irpChip(it) : "") + (it.pm_flag ? " " + pmChip(it) : "");
+          groupChip(it) + (it.irp ? " " + irpChip(it) : "") + (it.merged_from ? " " + mergedChip(it) : "") + (it.pm_flag ? " " + pmChip(it) : "");
       },
       itemFacts: function (it) {
         if (it.kind !== "monitor") {

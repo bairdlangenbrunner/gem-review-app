@@ -106,11 +106,23 @@
       return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
     });
   }
-  // escaped text with each http(s) link turned into a clickable one (notes name their sources by link)
+  // escaped text with each http(s) link turned into a clickable one (notes name their sources by link),
+  // and each name of a file on the researcher's own computer grayed with a tip, since nobody else can open it
+  // (the same pattern as LOCAL_PATH_RE in the researcher's state_gate.py, which stops such notes before staging)
+  var URL_RE = /https?:\/\/[^\s<]+[^\s<.,;:)'"]/g;
+  var LOCAL_PATH_RE = /(?<![\w\/.])(?:(?:work|batches|data|upstream|scripts|tmp)\/[^\s<]+[^\s<.,;:)'"]|\/Users\/[^\s<]+[^\s<.,;:)'"]|~\/[^\s<]+[^\s<.,;:)'"]|\/tmp\/[^\s<]+[^\s<.,;:)'"])|\b[\w-]+\.(?:xlsx|xls|csv|json|zip|parquet)\b/gi;
+  var LOCAL_TIP = "a file on the researcher's own computer: it can't be opened from here, so ask them for the web address or the steps to get it";
+  function localText(t) {
+    return t.replace(LOCAL_PATH_RE, function (f) { return '<span class="localpath" title="' + LOCAL_TIP + '">' + f + "</span>"; });
+  }
   function linkText(s) {
-    return esc(s).replace(/https?:\/\/[^\s<]+[^\s<.,;:)'"]/g, function (u) {
-      return '<a href="' + u + '" target="_blank" rel="noopener">' + u + "</a>";
-    });
+    var t = esc(s), out = "", last = 0, m;
+    URL_RE.lastIndex = 0;
+    while ((m = URL_RE.exec(t))) {
+      out += localText(t.slice(last, m.index)) + '<a href="' + m[0] + '" target="_blank" rel="noopener">' + m[0] + "</a>";
+      last = m.index + m[0].length;
+    }
+    return out + localText(t.slice(last));
   }
   function isItemKind(k) { return ITEM_KINDS.indexOf(k) >= 0; }
   function blankv(v) { return v == null || String(v).trim() === ""; }
@@ -672,18 +684,41 @@
   // ---- items ----
   var HIDE = {call_note: 1, call_reference: 1, decided_by: 1, decided_at: 1, key: 1, dir: 1, record_id: 1, call: 1, reviewed: 1, kind: 1,
               links: 1, verifications: 1, _item: 1, _p: 1, _i: 1};
-  var BODY = ["notes", "recommendation", "reason", "lookup_result"];
+  var BODY_LABEL = {finding: "found", recommendation: "suggest", reason: "reason", lookup_result: "lookup result"};   // body keys and their labels (T.body adds or relabels)
+  var LEAD_MAX = 480;        // the open body shows at most this much of a note that has no finding
+  var ABBR = /\b(?:[A-Z]|Mr|Mrs|Ms|Dr|St|No|vs|approx|Inc|Co|Corp|Ltd|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec|e\.g|i\.e)\.$/;
+  // The first n sentences of a note, cut at a sentence end (never mid-word): {text, cut}
+  function leadOf(t, n) {
+    t = String(t || "").trim();
+    var re = /[.!?]["')\]]?(?=\s+[A-Z0-9"(\[])/g, m, ends = [];
+    while ((m = re.exec(t))) {
+      var end = m.index + m[0].length;
+      if (!ABBR.test(t.slice(0, end).replace(/["')\]]$/, ""))) ends.push(end);
+    }
+    var lead = t;
+    if (ends.length >= n && ends[n - 1] < t.length) lead = t.slice(0, ends[n - 1]);
+    if (lead.length > LEAD_MAX && ends.length && ends[0] < lead.length) lead = t.slice(0, ends[0]);
+    if (lead.length > LEAD_MAX) lead = t.slice(0, LEAD_MAX).replace(/\s+\S*$/, "") + "\u2026";
+    return {text: lead, cut: lead.length < t.length};
+  }
+  function bodyLine(k, t) { return '<div class="body"><span class="k">' + esc(BODY_LABEL[k] || k.replace(/_/g, " ")) + "</span>" + linkText(t) + "</div>"; }
   var INFO_KINDS = {};       // item kinds shown for information only: no call, not listed on the card
   function itemHead(it) { return T.itemHead ? T.itemHead(it) : (it.title || kindLabel(it)); }
+  // The open body: what was found and what to do (finding, recommendation; reason and lookup result for watch and entity items), then the links.
+  // The researcher note sits under a notes dropdown with the record line; without a finding its first two sentences open the body instead.
   function itemBody(it) {
     if (T.itemBody) { var x = T.itemBody(it); if (x) return x; }
-    var h = "", used = {};
-    BODY.forEach(function (k) {
-      var t = it[k];
-      if (blankv(t) || typeof t !== "string") return;
-      var cut = t.length > 700;
-      h += '<div class="body">' + (k === "notes" ? "" : "<b>" + esc(k.replace(/_/g, " ")) + ":</b> ") + esc(cut ? t.slice(0, 700) + "…" : t) + "</div>";
-      if (!cut) used[k] = 1;
+    var h = "", used = {}, notes = typeof it.notes === "string" && !blankv(it.notes) ? it.notes : "", folded = !!notes;
+    if (typeof it.finding === "string" && !blankv(it.finding)) { h += bodyLine("finding", it.finding); used.finding = 1; }
+    else if (notes) {
+      var lead = leadOf(notes, 2);
+      h += '<div class="body">' + linkText(lead.text) + "</div>";
+      if (!lead.cut) { used.notes = 1; folded = false; }
+    }
+    Object.keys(BODY_LABEL).forEach(function (k) {
+      if (k === "finding" || blankv(it[k]) || typeof it[k] !== "string") return;
+      h += bodyLine(k, it[k]);
+      used[k] = 1;
     });
     var links = asList(it.links);
     if (links.length) {
@@ -692,6 +727,10 @@
         return urlLink(u) + (v ? " " + vmark(u, it) : "");
       }).join("<br>") + "</div>";
     }
+    var d = [];
+    if (folded) { d.push('<div class="dtxt"><span class="k">researcher notes</span>' + linkText(notes) + "</div>"); used.notes = 1; }
+    if (!T.hideRecord) d.push('<div class="dtxt"><span class="k">record:</span> ' + esc("batch " + dirLabel(it.dir) + " \u00b7 record " + (it.record_id || "?")) + "</div>");
+    if (d.length) h += '<details data-more><summary>' + (folded ? (T.hideRecord ? "notes" : "notes &amp; record") : "record") + "</summary>" + d.join("") + "</details>";
     return {html: h, used: used};
   }
   function fieldRows(it, used) {
@@ -1178,8 +1217,8 @@
   // "how to": a plain-language page on what the app shows and what each call does. T.info (HTML, or a function returning it) replaces the generic text.
   function savedWhere() {
     return STATIC ? (Store.status && Store.status().state === "synced" ?
-      " on this page, where the sender reads it back. <b>download decisions</b> gives you a backup copy of your calls" :
-      " kept in this browser. Click <b>download decisions</b> when you are done (or any time) and send the file back; the calls are then added to the batch's log") :
+      " on this page, where the sender reads it back. <b>push to log</b> in the top bar asks for your new calls to be added to the batch's log" :
+      " kept in this browser. Click <b>download decisions</b> in the top bar when you are done (or any time) and send the file back; the calls are then added to the batch's log") :
       " in the batch's staging folder";
   }
   function infoHtml() {
@@ -1192,7 +1231,8 @@
       "<li><b>Left list:</b> the " + W.cards + " with something to decide. Click one to open it.</li>" +
       "<li><b>Card:</b> that " + W.card + "'s proposed " + W.lines + ". Each one shows the value as it is <b>now</b>, the <b>proposed</b> value, and the source links that back it.</li>" +
       "<li><b>Major / minor:</b> a <b>major change</b> moves a value. A <b>minor change</b> means the value was checked again and stands, so only a source link is added.</li>" +
-      "<li><b>Color:</b> green means a well-checked source, yellow means one source or a partial match, and red means weak.</li>" +
+      "<li><b>Color:</b> green means a well-checked source, yellow means one source or a partial match, and red means weak. <b>unrated</b> means no rating, and it defaults to hold.</li>" +
+      "<li><b>Filters:</b> decision, kind and search sit in the bar at the top. <b>more filters</b> holds the rest, and <b>reset</b> clears them all. <b>hide done</b> drops the " + W.cards + " with nothing left to decide.</li>" +
       "<li><b>Items</b> tab: questions and other notes the researcher raised. They take a call and a note, but they never change a value.</li>" +
       "</ul><h4>your four calls</h4><ul>" +
       "<li><b>accept:</b> yes, this edit goes into the actions workbook.</li>" +
@@ -1205,6 +1245,7 @@
       "</ol><h4>good to know</h4><ul>" +
       "<li><b>Undo:</b> click the pressed button again, or press <kbd>u</kbd>. Nothing is deleted; the log just records the undo.</li>" +
       "<li>A grayed " + W.line + " is already decided. A bright one still needs you.</li>" +
+      "<li><b>theme</b> and the half-circle button change the page's colors.</li>" +
       "<li>Press <kbd>?</kbd> for the keyboard shortcuts.</li></ul>";
   }
   function showInfo() {
@@ -1462,6 +1503,7 @@
     if (STATIC) {
       var ex = $("export-btn");
       ex.hidden = false;
+      ex.classList.toggle("parked", synced);   // a synced page saves every call itself; only a page keeping calls in this browser needs the download
       ex.dataset.tip = synced ? "a backup copy of every call made here, as a file. Your calls are already saved on this page" :
         "save every call made in this browser as a review_log.jsonl file to send back. Safe to click more than once: the file always holds the whole log";
       ex.onclick = function () {
@@ -1705,7 +1747,7 @@
     merge(KIND_LABEL, T.kind_label); merge(KIND_TIP, T.kind_tip);
     merge(CALL_LABEL, T.call_label); merge(CALL_HELP, T.call_help); merge(CALL_HINT, T.call_hint);
     merge(SEV_LABEL, T.sev_label); merge(SEV_TIP, T.sev_tip); merge(TIER_TIP, T.tier_tip);
-    merge(BODY, T.body); merge(KEYS, T.keys); merge(W, T.words);
+    merge(BODY_LABEL, T.body); merge(KEYS, T.keys); merge(W, T.words);
     if (T.hideFields) T.hideFields.forEach(function (f) { HIDE[f] = 1; });
     if (T.itemFacets) ITEM_FACETS = T.itemFacets.slice();
     if (T.QK) QK = T.QK;
@@ -1733,7 +1775,7 @@
     get REMOTE() { return REMOTE; }, applyRemote: applyRemote, busy: busy, rerender: rerender,
     get KIND_LABEL() { return KIND_LABEL; }, get CALL_LABEL() { return CALL_LABEL; }, get SEV_LABEL() { return SEV_LABEL; },
     NOT_YET: NOT_YET, cards: cards,
-    $: $, esc: esc, linkText: linkText, chip: chip, tipAttrs: tipAttrs, urlLink: urlLink, asList: asList, vmark: vmark, shortLink: shortLink, shortUrl: shortUrl,
+    $: $, esc: esc, linkText: linkText, leadOf: leadOf, chip: chip, tipAttrs: tipAttrs, urlLink: urlLink, asList: asList, vmark: vmark, shortLink: shortLink, shortUrl: shortUrl,
     tag: tag, copyBtn: copyBtn, newvHtml: newvHtml, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, tierChip: tierChip, sevChip: sevChip,
     tierSummary: tierSummary, cur: cur, tierOf: tierOf, sevOf: sevOf, dstate: dstate, blankv: blankv, dirLabel: dirLabel, timeOf: timeOf, et: et,
     toast: toast, banner: banner, copyText: copyText, refilter: refilter, changed: changed, renderQueue: renderQueue, renderCard: renderCard,
