@@ -1,0 +1,6 @@
+/* LNG extension: small additions on the core's classes. */
+.lng-why { margin-top: 6px; }
+.lng-cites { margin-top: 2px; font-size: 12px; color: var(--muted, #667); }
+#dialog[data-kind="push"] .sum td, #dialog[data-kind="push"] .sum th { padding: 2px 8px; text-align: left; vertical-align: top; }
+#dialog[data-kind="push"] h4 { margin: 10px 0 4px; }
+.lng-sv, .lng-sr, .lng-sn { width: 100%; box-sizing: border-box; font: inherit; }

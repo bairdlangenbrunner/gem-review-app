@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent.parent
-REPOS = ("gogpt-researcher", "pipelines-researcher")
+REPOS = ("gogpt-researcher", "pipelines-researcher", "lng-carriers-researcher")
 
 
 def consumers(base=None):

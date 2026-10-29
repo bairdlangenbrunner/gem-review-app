@@ -41,6 +41,7 @@ gem-review-app/
   trackers/
     gogpt/   __init__.py  config.py  web/ext.js  web/ext.css
     pipelines/ __init__.py  config.py  web/ext.js  web/ext.css  web/gas.js (Apps Script adapter, parked)
+    lng/     __init__.py  config.py  web/ext.js  web/ext.css
   tests/                       core tests on a synthetic tracker config, no researcher repo needed
 ```
 
@@ -147,7 +148,7 @@ The pipelines plan is `pipelines-researcher/docs/plans/2026-10-21_review-app-rou
 
 1. This plan; the shared core extracted from the pipelines app; GOGPT ported onto it (config, extension, shims); the GOGPT test suite passes unchanged except for file paths.
 2. Pipelines ported the same way; its suites pass. Built and tested on 2026-10-08 in a scratch copy of pipelines-researcher and landed in that repo on 2026-10-09: shims for `store.py`, `server.py` and `build_static.py`, `bundle.py` building the Apps Script page from the shared web files, its own `web/` removed. The gas batch artifact page was rebuilt and republished from the shared interface the same day.
-3. LNG carriers, later.
+3. LNG carriers, built 2026-10-29 on the `baird` branch of both repos. It needed five core additions first (`b95108a`): the tracker suggest form, click to filter, linked pairs, undo through the session history, and bulk over the filtered set. The LNG store keeps its own files: lng-carriers-researcher's `review_app/core_store.py` gives the core store a `sink` that writes `decisions.csv`, `review_log.jsonl`, `review_items.jsonl` and `conflicts.csv`. There is no Google ledger: the artifact page's calls come back through that repo's `import_log.py`. Items sit on their vessel's card, and the session summary is in the progress dialog. The sep-17-pass page is published (https://claude.ai/artifact/RKK3eVeTvuLRyYdrXDWuzn). lng-carriers-researcher commits no `.claude/settings.json`, so it has no staleness hooks; `scripts/check_consumers.py` runs its check with the others.
 
 Verification for each port: the researcher repo's review tests pass; the loopback server serves its page and a headless browser renders a card and saves a decision; a single-file page builds and round-trips a decision through `static_store.js`; the live artifact pages are rebuilt and republished from the work profile.
 
