@@ -1,7 +1,7 @@
 """
 The GOGPT review config: every decision is a call on one staged record (its stable `record_id`, written by the gogpt-researcher repo's scripts/assemble_state.py).
 
-Line kinds: fill (a blank cell gets a value), change (a value is replaced), reverified (the current value was checked and stands, new Data Source link only), delete (a value is cleared), plant (a plant-level change applied to every unit row), new_row (a new unit or plant), checked (a plant the batch proposed nothing for: the researcher marks it checked once they have looked at it and set its Last Updated and Research status in the database).
+Line kinds: fill (a blank cell gets a value), change (a value is replaced), reverified (the current value was checked and stands, new Data Source link only), delete (a value is cleared), plant (a plant-level change applied to every unit row), new_row (a new unit or plant), checked (a plant the batch proposed nothing for: the researcher marks it checked once they have looked at it and set its Last Updated and Research status in the database; a line with `checked_in_db` was already updated in the database this cycle and loads grayed out and done).
 
 Item kinds and their calls: a concern (qa lane) is confirmed, dismissed or sent back for more research. A watch item (monitor lane) is added to the database, held, sent to the possible-updates sheet, or removed from the watchlist; removing needs a note saying why. A lead (a watch item that started as a new-row record too thin to stage, `lead_for` = newunits | newplants) can also be sent for more research, which puts it on the next batch's briefs. Everything else is noted, todo or dismissed. Items never write a cell.
 

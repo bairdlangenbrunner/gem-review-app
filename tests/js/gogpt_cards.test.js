@@ -96,13 +96,33 @@ test("the queue lists the sections in order, with their card counts; a plant GEM
     A.selectPipe(find(A, "L1#add"));
     html = P.$("pipes").innerHTML;
     // the queue rows say what each card is, and the addition and watch rows name the plant id, not the card id
-    assert.match(html, /proposed additions<\/span> <span class="n">2<\/span>[\s\S]*Brandywine power facility[\s\S]*?1 new unit, 1 lead/);   // the new units at a tracked plant sit on the new tab too
+    assert.match(html, /new rows to add<\/span> <span class="n">2<\/span>[\s\S]*Brandywine power facility[\s\S]*?1 new unit, 1 lead/);   // the new units at a tracked plant sit on the new tab too
     assert.match(P.$("qtabs").innerHTML, /data-qtab="new" aria-selected="true"/);
     assert.doesNotMatch(html, /L1#add/);
     A.selectPipe(find(A, "L1#watch"));
     html = P.$("pipes").innerHTML;
     assert.match(html, /watch/);
     assert.doesNotMatch(html, /L1#add|L1#watch/);
+  });
+});
+
+test("the new tab lists the cards with a row to add first, then the ones with only leads or questions, each under its own header", function () {
+  var data = dataset();
+  // an untracked candidate with only a watch item, placed ahead of the others in the dataset
+  data.plants.splice(1, 0, {pid: "new:patapsco-peaker", plant_pid: "", card_kind: "addition", name: "Patapsco peaker", dir: "a", country: "United States", state: "Maryland", units: [],
+                            lines: [], items: [item("new:patapsco-peaker", "us-md:new:monitor-9", {monitor_kind: "new_to_tracker", monitor_reason: "A peaker in a utility plan."})]});
+  var P = page(data);
+  return P.booted.then(function () {
+    var A = P.app.api;
+    assert.deepEqual(plain(A.cards().map(function (p) { return p.pid; })), ["L1", "L1#add", "new:severn-barge-station", "new:patapsco-peaker", "L1#watch"]);
+    A.S.hideDone = false;
+    A.FS.status = []; A.refilter(true);
+    A.selectPipe(find(A, "new:severn-barge-station"));
+    var html = P.$("pipes").innerHTML;
+    var secs = [], re = /<li class="qsec">.*?>([a-z ]+)<\/span> <span class="n">(\d+)<\/span><\/li>/g, m;
+    while ((m = re.exec(html))) secs.push(m[1] + " " + m[2]);
+    assert.deepEqual(secs, ["new rows to add 2", "leads and questions 1"]);
+    assert.match(html, /new rows to add[\s\S]*Brandywine[\s\S]*Severn barge station[\s\S]*leads and questions[\s\S]*Patapsco peaker/);
   });
 });
 
@@ -342,6 +362,27 @@ test("a plant with no suggested changes: one flat card with a checked / hold for
     assert.match(showCard(P, "L9"), /checked by BL/);
     l.decision = "hold"; A.renderQueue();
     assert.match(P.$("pipes").innerHTML, /held for later/);
+    assert.match(showCard(P, "L9"), /held for later by BL/);
+  });
+});
+
+test("a no-change plant already checked in the database this cycle loads grayed out as checked, and hide done drops it", function () {
+  var d = withNoChangePlant(dataset());
+  d.plants[1].units[0].last_updated = "2026-10-01";
+  d.plants[1].lines[0].checked_in_db = "2026-10-01";
+  var P = page(d);
+  return P.booted.then(function () {
+    var A = P.app.api, i = A.cards().findIndex(function (p) { return p.pid === "L9"; }), l = A.cards()[i].lines[0];
+    assert.equal(A.dstate(l), "undecided");                 // no call was made on the page
+    assert.equal(A.isOpen(l), false);                       // but it is not open: the counts and hide done treat it as done
+    var html = showCard(P, "L9");
+    assert.match(html, /class="line[^"]* dim/);
+    assert.match(html, /already checked in the database this cycle/);
+    // the default view (undecided, hide done) leaves it out, the same as a plant a person marked checked
+    assert.ok(A.S.visible.indexOf(i) < 0);
+    // a person's call still wins
+    l.reviewed = true; l.decision = "hold"; l.decided_by = "BL"; l.decided_at = "2026-10-30T10:00:00-04:00";
+    assert.equal(A.isOpen(l), false);
     assert.match(showCard(P, "L9"), /held for later by BL/);
   });
 });

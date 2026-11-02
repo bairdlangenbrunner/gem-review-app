@@ -50,6 +50,10 @@ table.pair td { white-space: pre-wrap; }
 .chip.lead { color: var(--t-new-ink); border-color: var(--t-new-ink); border-style: dashed; cursor: help; }
 /* a new row whose sources were checked and state a value */
 .chip.ready { background: var(--accept); color: #fff; border-color: transparent; font-weight: 600; cursor: help; }
+/* the copy-for-Chrome button in the card head: the plant's accepted changes as a message for Claude in Chrome */
+.bulkbtns button.chrome { color: var(--muted); border-color: transparent; background: none; font-size: 13px; padding: 2px 8px; opacity: .7; }
+.bulkbtns button.chrome:hover { color: var(--accent); border-color: var(--line); opacity: 1; }
+.bulkbtns button.chrome.off { opacity: .4; }
 /* the links from a card to the plant's other cards (plant edits / proposed additions / watch list) */
 .card .ctx .xcards a { margin-right: 8px; }
 /* an addition or watch card: rows then items, no tabs */
@@ -106,3 +110,7 @@ table.pair.units tr.other td { color: var(--muted); opacity: .6; }
 .qtabs { margin: 0; padding: 6px 10px 0; flex: 0 0 auto; }
 .qtabs button { font-size: 14px; }
 .qtabs button .n { color: var(--muted); font-weight: 400; }
+/* a line between the sections of the left list (on the new tab: new rows to add above, leads and questions below) */
+.pipes li.qsec:not(:first-child) { border-top: 2px solid var(--line); margin-top: 6px; }
+/* the card just above a section header drops its own bottom line, so the divider is the only line there */
+.pipes li:has(+ li.qsec) { border-bottom: none; }
