@@ -24,11 +24,11 @@ function dataset() {
             line("V1", "Capacity [ref]", {kind: "ref", flags: ["ref_only"]}),
             line("V1", "Status", {flags: ["ref_only"]})];
   return {
-    built: "2026-10-29T09:00:00-04:00", backend_pulled: "2026-10-29T08:00:00-04:00", dirs: ["a"], header: ["Name", "Other names", "Price"],
+    built: "2026-10-29T09:00:00-04:00", backend_pulled: "2026-10-29T08:00:00-04:00", dirs: ["a"], header: ["Name", "Other names", "Price", "Shipowner"],
     batches: [{dir: "a", mode: "fix", label: "fix a", apply_order: 1, applied: false, counts: {}, n: 6}],
     vessels: [
       {pid: "V1", dir: "a", name: "Arctic Spirit", live_row: 12, new: false, in_backend: true, row_id: "V1", imo: "9876543", status: "active", shipbuilder: "Hanwha", shipowner: "Teekay", hull: "3301", delivery_year: "2027", lines: v1, items: []},
-      {pid: "c:a:7", dir: "a", name: "Hull 5 (Jiangnan)", live_row: null, new: true, in_backend: false, cluster_id: "7", lines: [line("c:a:7", null, {kind: "new_row", id: "cluster:7", column: null, row_id: null, cluster_id: "7", row_data: {Name: "Hull 5 (Jiangnan)", "Name [ref]": "https://example.org/n", Status: "under construction"}})], items: []},
+      {pid: "c:a:7", dir: "a", name: "Hull 5 (Jiangnan)", live_row: null, new: true, in_backend: false, cluster_id: "7", lines: [line("c:a:7", null, {kind: "new_row", id: "cluster:7", column: null, row_id: null, cluster_id: "7", refs: [{url: "https://example.org/n", verdict: "verified"}], row_data: {Status: "under construction", Name: "Hull 5 (Jiangnan)", "Name [ref]": "https://example.org/n", Price: "", "Price [ref]": "", Shipowner: "Teekay", "Shipowner [ref]": "https://example.org/o1, https://example.org/o2"}})], items: []},
       {pid: "items", dir: "a", name: "items", live_row: null, new: false, lines: [], items: [
         {key: "a::conflict:0", dir: "a", pid: "items", kind: "conflict", title: "Price differs", detail: "research says 1", urls: ["https://example.org/c"], live_rows: [12], row_ids: ["V1"], conflict_index: 0, conflict_match: ["V1", "Price"], conflict_decision: "hold", backend_resolved: "", call: null, reviewed: false, logged_call: "accept"},
         {key: "a::manual:0", dir: "a", pid: "items", kind: "manual", title: "check the yard", detail: "d", urls: [], live_rows: [], row_ids: [], backend_resolved: "", call: null, reviewed: false}]}
@@ -73,6 +73,25 @@ test("the extension registers and the page boots on vessels", function () {
   });
 });
 
+test("a new row lists its filled columns in sheet order, each ref row under its value, with copy buttons and verdicts", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api, hit = -1;
+    A.cards().forEach(function (p, i) { if (p.pid === "c:a:7") hit = i; });
+    A.S.pipe = hit; A.renderCard();
+    var h = P.$("card").innerHTML;
+    assert.match(h, /<table class="rowdata">/);
+    // sheet order (Name before Price; Status, not in the sheet, goes last); a blank Price is left out; refs sit right under their value
+    var order = ["<td>Name</td>", "<td>Name [ref]</td>", "<td>Shipowner</td>", "<td>Shipowner [ref]</td>", "<td>Status</td>"];
+    var at = order.map(function (s) { return h.indexOf(s); });
+    at.forEach(function (i, n) { assert.ok(i >= 0, order[n] + " present"); if (n) assert.ok(i > at[n - 1], order[n] + " after " + order[n - 1]); });
+    assert.equal(h.indexOf("<td>Price</td>"), -1);
+    assert.ok(h.indexOf('data-clip="Teekay"') > 0, "copy button on the value");
+    assert.ok(h.indexOf('data-clip="https://example.org/o2"') > 0, "copy button on each link");
+    assert.match(h, /href="https:\/\/example.org\/o1"/);
+    assert.match(h, /verified/);
+  });
+});
 test("a line from an applied batch is an accept, not undecided, and nothing is saved for it", function () {
   var P = page();
   return P.booted.then(function () {

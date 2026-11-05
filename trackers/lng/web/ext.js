@@ -161,19 +161,24 @@
       }
       return row(col, nowH, propH, t);
     }
-    function newRowRows(l) {
-      var rd = l.row_data || {}, cols = (A.D.header || []).concat(Object.keys(rd).filter(function (c) { return (A.D.header || []).indexOf(c) < 0; })), h = "";
+    // a new row's table, as the pipelines and GOGPT pages draw theirs: every column the candidate has a value for, in the sheet's column order
+    // (columns the sheet does not have go last), each value with a copy button, and its "X [ref]" row right under it with each link, a copy button and the gate's verdict
+    function newRowTable(l) {
+      var rd = l.row_data || {}, H = A.D.header || [], byUrl = {};
+      (l.refs || []).forEach(function (r) { byUrl[r.url] = r; });
+      var cols = H.concat(Object.keys(rd).filter(function (c) { return H.indexOf(c) < 0; })), tr = "";
       cols.forEach(function (c) {
         if (/ \[ref\]$/.test(c)) return;
-        var v = rd[c], refs = String(rd[c + " [ref]"] || "").split(/,\s+/).filter(Boolean);
+        var v = rd[c], refs = String(rd[c + " [ref]"] || "").split(/,\s+|\s*\n\s*|\s+;\s+/).map(function (u) { return u.trim(); }).filter(Boolean);
         if (blankv(v) && !refs.length) return;
-        h += row(c, "", esc(v == null ? "" : v) + (refs.length ? '<div class="lng-cites">' + refs.map(function (u) { return A.shortLink(u); }).join(", ") + "</div>" : ""), "new");
+        tr += "<tr><td>" + esc(c) + "</td><td>" + (blankv(v) ? '<span class="muted">(blank)</span>' : esc(v) + A.copyBtn(v)) + "</td></tr>";
+        if (refs.length) tr += '<tr class="ref"><td>' + esc(c + " [ref]") + "</td><td>" + refs.map(function (u) { return A.urlLink(u) + A.copyBtn(u) + " " + verdictChip(byUrl[u] || {}); }).join("<br>") + "</td></tr>";
       });
-      return h;
+      return '<table class="rowdata">' + tr + "</table>";
     }
     function lineBody(l) {
       var h = "";
-      if (l.kind === "new_row") h = (l.cluster_label ? '<div class="dtxt">' + esc(l.cluster_label) + "</div>" : "") + A.pairTable(newRowRows(l));
+      if (l.kind === "new_row") h = (l.cluster_label ? '<div class="dtxt">' + esc(l.cluster_label) + "</div>" : "") + newRowTable(l);
       else if (l.kind === "ref" || has(l, "ref_only")) {
         h = A.pairTable(row(l.column || "", esc(l.cited_value || l.current || ""), '<span class="muted">value unchanged</span>', "") + refRow(l));
       } else h = A.pairTable(valueRow(l) + refRow(l));
