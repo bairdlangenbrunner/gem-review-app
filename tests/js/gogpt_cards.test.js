@@ -612,3 +612,29 @@ test("the sentence cut keeps abbreviations and numbers together and falls back t
   var long = new Array(60).join("word, more words and no period "), r = A.leadOf(long, 2);
   assert.ok(r.cut && r.text.length <= 481 && /\S…$/.test(r.text), r.text.length + " " + r.text.slice(-10));
 });
+
+test("a change that only swaps hidden characters is tagged characters and the card says which ones", function () {
+  var d = dataset();
+  d.plants[0].lines[0] = line("L1", "L1:G1:equipment", {kind: "change", column: "Equipment Manufacturer/Model",
+    current: {"Equipment Manufacturer/Model": "Siemens Energy: SGT6‑9000HL"}, current_ref: [PR],
+    proposed_values: {"Equipment Manufacturer/Model": "Siemens Energy: SGT6-9000HL"}, proposed: "Siemens Energy: SGT6-9000HL"});
+  var P = page(d);
+  return P.booted.then(function () {
+    var html = showCard(P, "L1", true);
+    assert.match(html, /tag-characters/);
+    assert.doesNotMatch(html, /tag-change/);
+    assert.match(html, /Same text as now\. Only hidden characters change: a non-breaking hyphen \(U\+2011\) becomes a plain hyphen\./);
+  });
+});
+
+test("a change in visible text keeps the change tag and no character note", function () {
+  var d = dataset();
+  d.plants[0].lines[0] = line("L1", "L1:G1:capacity", {kind: "change", column: "Capacity (MW)",
+    current: {"Capacity (MW)": "445"}, current_ref: [PR], proposed_values: {"Capacity (MW)": "419"}, proposed: "419"});
+  var P = page(d);
+  return P.booted.then(function () {
+    var html = showCard(P, "L1", true);
+    assert.match(html, /tag-change/);
+    assert.doesNotMatch(html, /charnote/);
+  });
+});

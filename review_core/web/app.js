@@ -593,12 +593,46 @@
     if (!k) return hl(s);
     return hl(s.slice(0, k[0])) + '<span class="keptv">' + esc(s.slice(k[0], k[1])) + "</span>" + hl(s.slice(k[1]));
   }
+  // Characters that look like (or are hidden next to) plain ones: a change that only swaps these reads
+  // as no change on screen, so the card names them. [character, its name, the plain form]
+  var LOOKALIKE = [[" ", "a non-breaking space", " "], [" ", "a narrow non-breaking space", " "], [" ", "a thin space", " "],
+    [" ", "a figure space", " "], [" ", "an en space", " "], [" ", "an em space", " "], ["\t", "a tab", " "],
+    ["‐", "a Unicode hyphen", "-"], ["‑", "a non-breaking hyphen", "-"], ["‒", "a figure dash", "-"],
+    ["–", "an en dash", "-"], ["—", "an em dash", "-"], ["−", "a minus sign", "-"], ["­", "a soft hyphen", ""],
+    ["​", "a zero-width space", ""], ["‌", "a zero-width non-joiner", ""], ["‍", "a zero-width joiner", ""],
+    ["⁠", "a word joiner", ""], ["﻿", "a byte order mark", ""],
+    ["‘", "a curly opening quote", "'"], ["’", "a curly closing quote", "'"], ["“", "a curly opening double quote", '"'], ["”", "a curly closing double quote", '"']];
+  function foldChars(s) {
+    s = String(s == null ? "" : s);
+    LOOKALIKE.forEach(function (x) { s = s.split(x[0]).join(x[2]); });
+    return s.replace(/ {2,}/g, " ").trim();
+  }
+  function plainName(ch) { return ch === " " ? "a plain space" : ch === "-" ? "a plain hyphen" : ch === "'" ? "a straight quote" : ch === '"' ? "a straight double quote" : ""; }
+  function codeOf(ch) { return "U+" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, "0"); }
+  // when `was` and `now` differ only by such characters (or runs of spaces), one plain sentence that says
+  // which characters change; "" when the visible text differs too
+  function charOnlyChange(was, now) {
+    if (blankv(was) || blankv(now)) return "";
+    var a = String(was).trim(), b = String(now).trim();
+    if (a === b || foldChars(a) !== foldChars(b)) return "";
+    var parts = [];
+    LOOKALIKE.forEach(function (x) {
+      var n = a.split(x[0]).length - 1, m = b.split(x[0]).length - 1;
+      if (n > m) {
+        var to = x[2] ? plainName(x[2]) : "";
+        parts.push((n - m > 1 ? (n - m) + " of " : "") + x[1] + " (" + codeOf(x[0]) + ")" + (to ? " becomes " + to : " is removed"));
+      } else if (m > n) parts.push(x[1] + " (" + codeOf(x[0]) + ") is added");
+    });
+    if (!parts.length) parts.push("the spacing changes");
+    return "Same text as now. Only hidden characters change: " + parts.join("; ") + ".";
+  }
   // one value row: field | now | proposed | tag
   function valueRow(c, was, now, reverified, l) {
     var wasH = blankv(was) ? "" : "<span>" + esc(was) + "</span>";
-    var nowH, t = "", same = false;
+    var nowH, t = "", same = false, chars = charOnlyChange(was, now);
     if (!blankv(was) && String(was).trim() === String(now).trim()) { nowH = wasH; same = true; t = reverified ? "re-verified" : ""; }
     else if (blankv(now)) { nowH = '<span class="newv c-' + tierOf(l || {}) + '">(clear)</span>'; t = "clear"; }
+    else if (chars) { t = "characters"; nowH = '<span class="newv c-' + tierOf(l || {}) + '">' + esc(now) + "</span>" + copyBtn(now) + '<div class="charnote">' + esc(chars) + "</div>"; }
     else { t = blankv(was) ? "fill" : "change"; nowH = newvHtml(was, now, "c-" + tierOf(l || {})) + copyBtn(now); }
     return '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";
   }
