@@ -73,6 +73,20 @@ test("the extension registers and the page boots on vessels", function () {
   });
 });
 
+test("a line from an applied batch is an accept, not undecided, and nothing is saved for it", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api, l = lineAt(A, "V1", "Price");
+    l.flags = ["applied"]; l.reviewed = false; l.decision = null;
+    A.reload({vessels: A.cards(), dirs: ["a"], batches: [], built: "", backend_pulled: "", header: []});
+    l = lineAt(A, "V1", "Price");
+    assert.equal(A.cur(l), "accept");
+    assert.equal(A.isOpen(l), false);
+    assert.match(A.decisionText(l), /already applied/);
+    assert.equal(P.saved.length, 0);
+  });
+});
+
 test("Name and Other names are decided together; Price and Price currency are asked about", function () {
   var P = page();
   return P.booted.then(function () {

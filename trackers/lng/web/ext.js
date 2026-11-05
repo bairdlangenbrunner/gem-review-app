@@ -190,6 +190,7 @@
       return '<details data-more><summary>details</summary>' + d.join("") + "</details>";
     }
     function decisionText(l) {
+      if (l._applied && l.decision === "accept") return "accepted: this batch is already applied to the backend";
       if (!(l.reviewed && l.decision === "suggest")) return null;
       var refs = l.suggested_refs || [];
       return "suggested " + (l.suggest_kind || "value") + ": " + (blankv(l.suggested_value) ? "(note only)" : l.suggested_value) + " by " + (l.decided_by || "?") + " " + A.timeOf(l.decided_at) +
@@ -343,6 +344,9 @@
       cards_key: "vessels",
       words: {card: "vessel", cards: "vessels", line: "change", lines: "changes"},
       searchPlaceholder: "name / IMO / builder / owner / hull",
+      // a change the backend already holds (value and refs: the in_backend flag) is not waiting on a call, whether or not anyone clicked it: the undecided view, progress and tab counts leave it out, as the old LNG page did. Any other decision view still lists it.
+      counted: function (l) { return (l.flags || []).indexOf("in_backend") < 0; },
+      bulkSkip: {uncounted: " already in the backend"},
       pidTip: "click to copy the row",
       references: false,
       suggestRef: false,
@@ -384,7 +388,15 @@
       },
 
       // ---- cards ----
-      prepare: function (p) { p._hay += " " + [p.imo, p.shipbuilder, p.shipowner, p.hull, p.status, p.live_row].filter(function (x) { return x != null && x !== ""; }).join(" ").toLowerCase(); },
+      // a change from a batch already applied to the backend is an accept, on the page only: shown and filtered as accepted, never undecided.
+      // Nothing is written for it (no log record, no decisions.csv change), so a push still counts only real clicks. A person's own call on the line speaks over it.
+      prepare: function (p) {
+        p.lines.forEach(function (l) {
+          if (l.reviewed || (l.flags || []).indexOf("applied") < 0) return;
+          l.reviewed = true; l.decision = "accept"; l.decided_by = "already applied"; l.decided_at = null; l._applied = true;
+        });
+        p._hay += " " + [p.imo, p.shipbuilder, p.shipowner, p.hull, p.status, p.live_row].filter(function (x) { return x != null && x !== ""; }).join(" ").toLowerCase();
+      },
       flatCard: function () { return true; },
       showPid: function (p) { return p.live_row != null; },
       pidText: function (p) { return "row " + p.live_row; },
