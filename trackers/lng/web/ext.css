@@ -9,3 +9,5 @@ table.rowdata tr.ref td { border-top-style: dashed; }   /* a new row's "X [ref]"
 .pipes .pmeta .lng-qmeta { flex: 1 1 8em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pipes .pmeta .n { flex: 0 1 auto; margin-left: auto; text-align: right; }
 #issues-link[hidden] { display: none; }   /* a.ghost sets display, which would beat the hidden attribute */
+/* air above the accept-all buttons: the pinned card header gets extra top padding (the core sets 16px) */
+.card > .cardhead { padding-top: 32px; }

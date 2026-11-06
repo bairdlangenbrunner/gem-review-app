@@ -537,6 +537,7 @@
   // major is the default and the value table already tags each edit fill, change or clear, so only a minor line gets a chip
   function sevChip(l) {
     if (T.sevChip) return T.sevChip(l);
+    if (T.noMinor) return "";   // a tracker with no major / minor split (LNG) shows no severity chip
     var s = sevOf(l);
     if (s !== "minor") return "";
     return chip("minor · " + (l.reverified ? "checked, stands" : (KIND_LABEL[l.kind] || l.kind)), s, SEV_TIP[s]);
@@ -851,13 +852,13 @@
   // A button is live only when a line it covers is open (isOpen), the same rule bulk accept uses to pick its lines.
   function bulkButtons(p) {
     var wc = W.card, wl = W.lines;
-    return (function () {
+    return (T.noMinor ? "" : (function () {
         var minor = p.lines.filter(function (l) { return sevOf(l) === "minor"; });
         var on = minor.some(isOpen);
         var why = !minor.length ? "no minor " + wl + " on this " + wc : "no minor " + W.line + " on this " + wc + " is waiting on a call";
         return '<button type="button" class="bulk b-accept' + (on ? "" : " off") + '" data-bulk="bulk-minor"' + (on ? "" : ' aria-disabled="true" data-why="' + esc(why) + '"') +
           tipAttrs(on ? "accept every undecided minor " + W.line + " on this " + wc + " (the values stand, only links are added) that the filters show" : why) + '>accept all minor ' + wl + '</button>';
-      })() +
+      })()) +
       '<button type="button" class="bulk b-accept" data-bulk="bulk-high"' + tipAttrs("accept every undecided green (high confidence) " + W.line + " on this " + wc + ", major or minor, that the filters show") + '>accept all high-conf ' + wl + '</button>' +
       (function () {
         var nonHigh = p.lines.filter(function (l) { return tierOf(l) !== "high"; });

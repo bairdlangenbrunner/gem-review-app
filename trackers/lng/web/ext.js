@@ -103,25 +103,11 @@
     }
 
     // ---- chips ----
+    // the only flag chips on a card: whether the sheet already holds the line (the confidence chip and "derived" come with it)
     var FLAG_TEXT = {
-      preserve_ref: ["cosmetic", "spelling or style only; the cell's [ref] stays"],
-      append_ref: ["appends", "added to what the cell already holds, nothing is replaced"],
-      ref_only: ["ref only", "adds links; the value is untouched"],
-      igu_pdf_only: ["only source: IGU", "the IGU World LNG Report PDF is the sole source"],
       in_backend: ["in the backend", "the sheet already holds this value and its links"],
-      value_in_backend: ["value in the backend", "the sheet holds this value, but not every proposed link"],
-      applied: ["already applied", "this batch is in the sheet; changing the call does not unapply it"]
+      value_in_backend: ["value in the backend", "the sheet holds this value, but not every proposed link"]
     };
-    // the same cell proposed by another batch: quiet when the values agree, a warning when they do not
-    function overlapChips(l) {
-      return (l.links || []).map(function (k) { return A.LINE_BY_KEY[k]; }).filter(function (q) {
-        return q && q.column === l.column && q.kind !== "ref" && l.kind !== "ref";
-      }).map(function (q) {
-        var b = batchOf(q.dir).label;
-        return q.proposed === l.proposed ? chip("same value in batch " + b, "", "batch " + b + " proposes the same value for this cell")
-          : chip("batch " + b + " differs", "warn", "batch " + b + " proposes “" + short(q.proposed, 80) + "” for this cell; the later batch wins at push");
-      });
-    }
     // only worth saying once a person has decided the two sides differently
     function pairSplit(l) {
       var d = A.cur(l);
@@ -131,9 +117,8 @@
       var out = base.slice();
       if (l.derivable) out.push(chip("derived", "", "computed from other cells, no page checked"));
       (l.flags || []).forEach(function (f) {
-        if (FLAG_TEXT[f]) out.push(chip(FLAG_TEXT[f][0], f === "applied" ? "warn" : "", FLAG_TEXT[f][1]));
+        if (FLAG_TEXT[f]) out.push(chip(FLAG_TEXT[f][0], "", FLAG_TEXT[f][1]));
       });
-      out = out.concat(overlapChips(l));
       if (pairSplit(l)) out.push(chip("pair split", "warn", "its linked line has a different call"));
       return out;
     }
@@ -213,7 +198,7 @@
       return '<details data-more><summary>notes &amp; record</summary>' + d.join("") + "</details>";
     }
     function decisionText(l) {
-      if (l._applied && l.decision === "accept") return "accepted: this batch is already applied to the sheet";
+      if (l._applied && l.decision === "accept") return "accepted";
       if (l.reviewed && l.decision === "suggest") {
         var refs = l.suggested_refs || [];
         return "suggested " + (l.suggest_kind || "value") + ": " + (blankv(l.suggested_value) ? "(note only)" : l.suggested_value) + " by " + (l.decided_by || "?") + " " + A.timeOf(l.decided_at) +
@@ -291,9 +276,7 @@
         "<li><b>New row:</b> a vessel the sheet does not have yet, with every column the research fills and its sources. It is added by hand, never pushed.</li>" +
         "<li><b>Color:</b> green means a live page states the value for this vessel. Yellow means it is held for a decision: one generic match, an archived page, or a doubt the researcher wrote down. Red means no link passed the check. " +
         "Green starts as accept and the rest as hold, but nothing is written until you click.</li>" +
-        "<li><b>Chips:</b> <b>in the backend</b>, the sheet already holds the value and its links. <b>value in the backend</b>, the value is there but a link is not. <b>already applied</b>, the batch was applied to the sheet, so the line shows as accepted. " +
-        "<b>cosmetic</b>, spelling or style only and the cell's [ref] stays. <b>appends</b>, added to what the cell holds. <b>only source: IGU</b>, the IGU World LNG Report PDF is the sole source. <b>derived</b>, computed from other cells with no page checked. " +
-        "<b>same value in batch N</b> or <b>batch N differs</b>, another batch proposes this cell too; the later batch wins at push.</li>" +
+        "<li><b>Chips:</b> <b>in the backend</b>, the sheet already holds the value and its links. <b>value in the backend</b>, the value is there but a link is not. <b>derived</b>, computed from other cells with no page checked. A line from a batch already applied to the sheet shows as accepted.</li>" +
         "<li><b>Filters:</b> decision, kind (fill a blank, change a value, clear a value, source link only, new row) and search sit in the bar at the top. <b>more filters</b> holds column, batch, confidence and decided by, and <b>reset</b> clears them all. " +
         "<b>hide done</b> drops the vessels with nothing left to decide.</li>" +
         "<li><b>Items:</b> conflicts (the research disagrees with a value already in the sheet), discovery flags, manual-review entries and possible duplicates sit at the end of their vessel's card, or on the <b>items with no vessel</b> card. " +
@@ -510,6 +493,7 @@
       },
       lineWhere: function (l) { var p = A.cards()[l._p]; return (p ? rowLabel(l.kind === "new_row" ? {new: true} : p) : ""); },
       lineClass: function (l) { return l._dup ? " lng-dup" : ""; },
+      noMinor: true,
       lineChips: lineChips,
       lineBody: lineBody,
       lineDetails: lineDetails,

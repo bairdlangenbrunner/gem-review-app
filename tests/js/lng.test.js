@@ -101,7 +101,7 @@ test("a line from an applied batch is an accept, not undecided, and nothing is s
     l = lineAt(A, "V1", "Price");
     assert.equal(A.cur(l), "accept");
     assert.equal(A.isOpen(l), false);
-    assert.match(A.decisionText(l), /already applied/);
+    assert.match(A.decisionText(l), /^accepted$/);
     assert.equal(l.decided_by, null, "no reviewer is invented for an applied line");
     assert.equal(A.noteBox(l), false);
     assert.equal(P.saved.length, 0);
