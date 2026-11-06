@@ -11,3 +11,5 @@ table.rowdata tr.ref td { border-top-style: dashed; }   /* a new row's "X [ref]"
 #issues-link[hidden] { display: none; }   /* a.ghost sets display, which would beat the hidden attribute */
 /* air above the accept-all buttons: the pinned card header gets extra top padding (the core sets 16px) */
 .card > .cardhead { padding-top: 32px; }
+/* when the accept-all buttons wrap under the title (narrow panes, the artifact): clear space above them and before the chip line */
+.card .headrow { row-gap: 18px; margin-bottom: 14px; }
