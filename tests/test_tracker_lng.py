@@ -18,6 +18,8 @@ def test_a_suggest_needs_a_value_a_note_and_url_refs():
     for bad in ({"suggested_value": ""}, {"note": " "}, {"suggest_kind": "other"}, {"suggested_refs": ["ftp://x"]}):
         with pytest.raises(Invalid):
             lng.line_request(None, 0, dict(r, **bad), FILL, {})
+    for kind in ("fill", "change", "delete"):
+        assert lng.suggestable(dict(FILL, kind=kind))
     for line in ({"kind": "ref"}, {"kind": "new_row"}, dict(FILL, flags=["ref_only"])):
         with pytest.raises(Invalid, match="nothing to suggest"):
             lng.line_request(None, 0, r, line, {})

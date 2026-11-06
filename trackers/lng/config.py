@@ -1,7 +1,7 @@
 """
 The LNG carriers review config. lng-carriers-researcher binds it through its review_app shims (core_store.py, server.py, build_static.py), the same way gogpt-researcher binds trackers/gogpt.
 
-A card is a vessel: one backend row (pid = the row's UUID), or one discovery cluster with no row yet (pid = "c:<batch>:<cluster_id>"). One more card ("items") holds the items no vessel card claims. A line is one proposal of a batch (key `<batch>::<decisions.csv id>`); its kind is fill (a value with its [ref]), ref (a [ref] alone) or new_row (a discovery cluster's whole row).
+A card is a vessel: one backend row (pid = the row's UUID), or one discovery cluster with no row yet (pid = "c:<batch>:<cluster_id>"). One more card ("items") holds the items no vessel card claims. A line is one proposal of a batch (key `<batch>::<decisions.csv id>`); its kind is fill (a value into a blank cell, with its [ref]), change (a new value over the cell's current one), delete (the cell cleared), ref (a [ref] alone) or new_row (a discovery cluster's whole row). The batch files say fill for every value line; review_data.adapt splits that into fill, change and delete for the page.
 
 A suggest is stricter than the core's: it needs a value AND a note, and carries suggest_kind (value: a different value; cosmetic: the same fact styled differently) and suggested_refs (the URLs that support it; push.py gates them before it writes). A new_row, ref or ref-only line takes no suggest.
 
@@ -19,7 +19,8 @@ from review_core.config import TrackerConfig
 from review_core.server import Refusal
 from review_core.store import Invalid
 
-LINE_KINDS = ("fill", "ref", "new_row")
+LINE_KINDS = ("fill", "change", "delete", "ref", "new_row")
+VALUE_KINDS = ("fill", "change", "delete")          # the kinds that move a cell value; a suggest is allowed on these
 ITEM_KINDS = ("conflict", "flag", "manual", "proposed_bucket", "duplicate")
 CONFLICT_CALLS = ("accept", "hold", "reject")       # the conflict calls written into conflicts.csv
 OTHER_CALLS = ("resolved", "needs_research")
@@ -33,7 +34,7 @@ _URL = re.compile(r"https?://\S+$")
 
 def suggestable(line):
     """A suggest replaces a value: not on a new row, a ref line or a ref-only line."""
-    return line.get("kind") == "fill" and "ref_only" not in (line.get("flags") or [])
+    return line.get("kind") in VALUE_KINDS and "ref_only" not in (line.get("flags") or [])
 
 
 def suggested_refs(raw, i=0):

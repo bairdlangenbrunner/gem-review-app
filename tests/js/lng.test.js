@@ -20,7 +20,7 @@ function line(pid, column, extra) {
 }
 function dataset() {
   var v1 = [line("V1", "Name", {proposed: "Arctic Spirit", links: ["a::V1:Other names"]}), line("V1", "Other names", {links: ["a::V1:Name"]}),
-            line("V1", "Price", {links: ["a::V1:Price currency"]}), line("V1", "Price currency", {proposed: "USD", links: ["a::V1:Price"]}),
+            line("V1", "Price", {links: ["a::V1:Price currency"]}), line("V1", "Price currency", {kind: "change", current: "EUR", proposed: "USD", links: ["a::V1:Price"]}),
             line("V1", "Capacity [ref]", {kind: "ref", flags: ["ref_only"]}),
             line("V1", "Status", {flags: ["ref_only"]})];
   return {
@@ -73,7 +73,7 @@ test("the extension registers and the page boots on vessels", function () {
   });
 });
 
-test("a new row lists its filled columns in sheet order, each ref row under its value, with copy buttons and verdicts", function () {
+test("a new row lists its filled columns in sheet order, then every ref in one sources table below them, with copy buttons and verdicts", function () {
   var P = page();
   return P.booted.then(function () {
     var A = P.app.api, hit = -1;
@@ -81,8 +81,8 @@ test("a new row lists its filled columns in sheet order, each ref row under its 
     A.S.pipe = hit; A.renderCard();
     var h = P.$("card").innerHTML;
     assert.match(h, /<table class="rowdata">/);
-    // sheet order (Name before Price; Status, not in the sheet, goes last); a blank Price is left out; refs sit right under their value
-    var order = ["<td>Name</td>", "<td>Name [ref]</td>", "<td>Shipowner</td>", "<td>Shipowner [ref]</td>", "<td>Status</td>"];
+    // sheet order (Name before Price; Status, not in the sheet, goes last); a blank Price is left out; the refs follow every value, in the same order
+    var order = ["<td>Name</td>", "<td>Shipowner</td>", "<td>Status</td>", ">sources<", "<td>Name [ref]</td>", "<td>Shipowner [ref]</td>"];
     var at = order.map(function (s) { return h.indexOf(s); });
     at.forEach(function (i, n) { assert.ok(i >= 0, order[n] + " present"); if (n) assert.ok(i > at[n - 1], order[n] + " after " + order[n - 1]); });
     assert.equal(h.indexOf("<td>Price</td>"), -1);
@@ -102,6 +102,8 @@ test("a line from an applied batch is an accept, not undecided, and nothing is s
     assert.equal(A.cur(l), "accept");
     assert.equal(A.isOpen(l), false);
     assert.match(A.decisionText(l), /already applied/);
+    assert.equal(l.decided_by, null, "no reviewer is invented for an applied line");
+    assert.equal(A.noteBox(l), false);
     assert.equal(P.saved.length, 0);
   });
 });
@@ -246,5 +248,127 @@ test("the store records the kind and refs on a suggest, empty on anything else, 
     assert.deepEqual(plain(l1.suggested_refs), ["https://a.org"]);
     assert.equal(l2.suggest_kind, "");
     assert.deepEqual(plain(l2.suggested_refs), []);
+  });
+});
+
+test("a link's verdict gets the same marks as the other trackers: a cell gate pass is a check, a URL log entry is only page read", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api, hit = -1;
+    A.cards().forEach(function (p, i) { if (p.pid === "c:a:7") hit = i; });
+    function show(v) {
+      A.cards()[hit].lines[0].refs = [{url: "https://example.org/n", verdict: v}];
+      A.S.pipe = hit; A.renderCard();
+      return P.$("card").innerHTML;
+    }
+    assert.match(show("PASS (live row 6: value '126750': OK (shipvault_api))"), /class="chip ok"[^>]*>✓</);
+    var h = show("PASS (URL log)");
+    assert.match(h, />page read</);
+    assert.doesNotMatch(h, /PASS \(URL log\)<\/span>/);
+    assert.doesNotMatch(h, /class="chip ok"/);
+    assert.match(show("FAIL (URL log)"), />✗ value</);
+    assert.match(show("DROPPED — unreachable (dead: 404)"), />✗ load</);
+    assert.match(show(""), />unchecked</);
+  });
+});
+
+test("the how-to and keyboard text are the LNG page's own: the sheet, the push, the chips; no items key, the notes key says notes and record", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api;
+    P.$("info-btn").onclick();
+    var h = P.$("dialog").innerHTML;
+    assert.match(h, /<h3>how this works<\/h3>/);
+    assert.match(h, /push changes/);
+    assert.match(h, /in the backend/);
+    assert.match(h, /Name<\/b> and <b>Other names<\/b> are decided together/);
+    assert.doesNotMatch(h, /actions workbook|Major \/ minor/);
+    P.$("dialog").open = false;
+    P.$("help-btn").onclick();
+    h = P.$("dialog").innerHTML;
+    assert.doesNotMatch(h, /<kbd>i<\/kbd>/);
+    assert.match(h, /notes and record/);
+    assert.match(h, /Cmd\/Ctrl\+Enter saves/);
+    assert.ok(A, "api");
+  });
+});
+
+test("the line kinds read as what the line does to the cell, and the kind filter lists them", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api;
+    assert.equal(A.kindLabel({kind: "fill"}), "fill a blank");
+    assert.equal(A.kindLabel({kind: "change"}), "change a value");
+    assert.equal(A.kindLabel({kind: "delete"}), "clear a value");
+    assert.equal(A.kindLabel({kind: "ref"}), "source link only");
+    assert.equal(A.kindLabel({kind: "conflict"}), "conflict");
+    var opts = P.$("f-kind").innerHTML;
+    assert.match(opts, /value="fill"[^>]*>fill a blank \(/);
+    assert.match(opts, /value="change"[^>]*>change a value \(/);
+    assert.match(opts, /value="ref"[^>]*>source link only \(/);
+    assert.doesNotMatch(opts, /value="delete"/, "a kind the dataset does not have is left out");
+    var lng = P.ctx.ReviewApp.tracker || {};
+    var can = A.lineActions ? function (l) { return A.lineActions(l).suggest; } : null;
+    if (can) {
+      assert.equal(can(line("V1", "Price", {kind: "change", current: "unknown"})), true);
+      assert.equal(can(line("V1", "Price", {kind: "delete", proposed: ""})), true);
+    }
+    assert.ok(lng, "tracker");
+  });
+});
+
+test("the queue badge counts what is left to decide, with the row, yard and owner; the card has no pre-filled chip and keeps the note once under notes & record", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api, q = P.$("pipes").innerHTML;
+    assert.match(q, /\d+ to decide/);
+    assert.doesNotMatch(q, /major|minor/);
+    assert.match(q, /row 12 · Hanwha · Teekay/);
+    var hit = -1;
+    A.cards().forEach(function (p, i) { if (p.pid === "V1"); if (p.pid === "V1") hit = i; });
+    var l = A.cards()[hit].lines[2];
+    l.why = "the yard release prints the price"; l.detail = ["the sister ship carries the same figure"]; l.confidence_why = "a live page states the value";
+    A.S.pipe = hit; A.renderCard();
+    var h = P.$("card").innerHTML;
+    assert.doesNotMatch(h, /pre-filled|lng-why|How sure|Sources to open/);
+    assert.match(h, /<summary>notes &amp; record<\/summary>/);
+    assert.equal((h.match(/the yard release prints the price/g) || []).length, 1);
+    assert.match(h, /the yard release prints the price\nthe sister ship carries the same figure/);
+    assert.match(h, /<span class="k">grade<\/span>a live page states the value/);
+    assert.match(h, /<span class="k">record<\/span>batch fix a · default accept · record V1\|Price/);
+    assert.match(h, /class="pid"[^>]*>12</, "the card id is the sheet row");
+  });
+});
+
+test("a settled line that repeats an earlier one on the card (same cell, same value, another batch) is hidden", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api, cards = A.cards(), v1 = cards[0];
+    var a = v1.lines.filter(function (l) { return l.column === "Price"; })[0];
+    var b = line("V1", "Price", {key: "b::V1:Price", dir: "b", id: "V1|Price"});
+    a.reviewed = b.reviewed = true; a.decision = b.decision = "accept"; a.decided_by = b.decided_by = "BL";
+    v1.lines.push(b);
+    A.reload({vessels: cards, dirs: ["a", "b"], batches: [{dir: "a", label: "fix a"}, {dir: "b", label: "fix b"}], built: "", backend_pulled: "", header: []});
+    A.S.pipe = 0; A.renderCard();
+    var h = P.$("card").innerHTML;
+    assert.equal((h.match(/class="line [^"]*lng-dup/g) || []).length, 1);
+    var open = line("V1", "Price", {key: "c::V1:Price", dir: "c"});
+    A.cards()[0].lines.push(open);
+    A.reload({vessels: A.cards(), dirs: ["a", "b", "c"], batches: [], built: "", backend_pulled: "", header: []});
+    A.S.pipe = 0; A.renderCard();
+    assert.equal((P.$("card").innerHTML.match(/lng-dup/g) || []).length, 1, "an open line is never hidden");
+  });
+});
+
+test("a machine's record is the status line, not a note box", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api, l = lineAt(A, "V1", "Price");
+    l.reviewed = true; l.decision = "accept"; l.decided_by = "backend sync"; l.decided_at = "2026-10-29T10:00:00-04:00"; l.decision_note = "the sheet holds the value";
+    assert.equal(A.noteBox(l), false);
+    assert.match(A.decisionText(l), /^accepted by backend sync .*the sheet holds the value$/);
+    l.decided_by = "BL"; l.decision_note = "";
+    assert.equal(A.noteBox(l), true);
+    assert.match(A.decisionText(l), /^accepted by BL/);
   });
 });

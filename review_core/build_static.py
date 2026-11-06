@@ -3,12 +3,13 @@ The single-file review page: the shared page plus one tracker's extension, with 
 
 The page has no doctype, html, head or body tags of its own: the Artifact tool wraps it, and a browser opening the file from disk does the same. In order it holds:
 
-  1. <title> (the tracker's title, or the one given)
-  2. <style>: review_core/web/style.css, review_core/web/leaflet.css (the route maps), then the tracker's web/ext.css
-  3. the body of review_core/web/index.html, with its local script and stylesheet tags taken out
-  4. the dataset: <script type="application/octet-stream" id="review-blob">, base64 of gzip {data, index, legacy}, where legacy (left out when empty) is legacy_map
-  5. <script>window.REVIEW_STATIC = {reviewer, built, ledger_url, logged, tracker}</script>, where tracker is TrackerConfig.page_block() and logged is the ids of page records already in the decision log (logged_ids)
-  6. review_core/web/static_store.js, review_core/web/geo.js, review_core/web/app.js, then the tracker's web/ext.js
+  1. <meta charset="utf-8">, so a browser opening the file from disk reads the page's marks (✓, ✗, ·) as UTF-8
+  2. <title> (the tracker's title, or the one given)
+  3. <style>: review_core/web/style.css, review_core/web/leaflet.css (the route maps), then the tracker's web/ext.css
+  4. the body of review_core/web/index.html, with its local script and stylesheet tags taken out
+  5. the dataset: <script type="application/octet-stream" id="review-blob">, base64 of gzip {data, index, legacy}, where legacy (left out when empty) is legacy_map
+  6. <script>window.REVIEW_STATIC = {reviewer, built, ledger_url, logged, tracker}</script>, where tracker is TrackerConfig.page_block() and logged is the ids of page records already in the decision log (logged_ids)
+  7. review_core/web/static_store.js, review_core/web/geo.js, review_core/web/app.js, then the tracker's web/ext.js
 
 A missing ext.css, ext.js, geo.js or leaflet.css counts as empty. The page refuses route geometry (every line's `geo`) over MAX_GEO_BYTES. The dataset and its reviewer settings come before the scripts so every script can read them as it loads.
 
@@ -145,8 +146,8 @@ def logged_ids(data, root):
     return sorted(out)
 
 
-def render(data, reviewer, config, index=None, title=None, ledger_url="", root=None):
-    """The page as one html string (see the module docstring). `index` defaults to pack_index. With `root` (the researcher repo, which the dir labels are relative to), the page also gets `logged`, the ids logged_ids finds."""
+def render(data, reviewer, config, index=None, title=None, ledger_url="", root=None, reviewer_name=""):
+    """The page as one html string (see the module docstring). `reviewer` is the initials the log records carry; `reviewer_name` is the full name, for text the page writes for a person (gogpt's copy for Chrome names who applies the edits). `index` defaults to pack_index. With `root` (the researcher repo, which the dir labels are relative to), the page also gets `logged`, the ids logged_ids finds."""
     html = (CORE_WEB / "index.html").read_text(encoding="utf-8")
     css = "\n".join(_core(n).rstrip() for n in ("style.css", "leaflet.css")) + "\n" + _read(web_file(config, "ext.css")).rstrip()
     if "</style" in css.lower():
@@ -162,7 +163,7 @@ def render(data, reviewer, config, index=None, title=None, ledger_url="", root=N
     left = re.findall(r'<(?:script|link)[^>]+(?:src|href)="(?!https?:)[^"]*"', body)
     if left:
         raise SystemExit(f"index.html still references local files the page cannot load: {left}")
-    cfg = json.dumps({"reviewer": reviewer or "", "built": data.get("built", ""), "ledger_url": ledger_url or "",
+    cfg = json.dumps({"reviewer": reviewer or "", "reviewer_name": reviewer_name or "", "built": data.get("built", ""), "ledger_url": ledger_url or "",
                       "logged": logged_ids(data, root) if root else [],
                       "tracker": config.page_block()}, ensure_ascii=False).replace("</", "<\\/")
     gb = geo_bytes(data, config)
@@ -175,7 +176,7 @@ def render(data, reviewer, config, index=None, title=None, ledger_url="", root=N
         scripts.append(_inline_js("ext.js", ext_js))
     if index is None:
         index = pack_index(data, config)
-    return (f"<title>{title}</title>\n<style>\n{css.strip()}\n</style>\n"
+    return (f'<meta charset="utf-8">\n<title>{title}</title>\n<style>\n{css.strip()}\n</style>\n'
             f"{body.strip()}\n"
             f'<script type="application/octet-stream" id="{BLOB_ID}">{blob(data, index, legacy_map(data, config))}</script>\n'
             f"<script>window.REVIEW_STATIC = {cfg};</script>\n"

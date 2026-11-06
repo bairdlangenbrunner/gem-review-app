@@ -1,6 +1,11 @@
 /* LNG extension: small additions on the core's classes. */
-.lng-why { margin-top: 6px; }
+.dtxt .k { text-transform: none; letter-spacing: 0; }   /* the "notes & record" labels read as plain words, not small caps */
+h2 .pid::before { content: "row "; }   /* the card's id is the sheet row, said so */
+.line.lng-dup { display: none; }   /* a settled line that repeats an earlier one on the card (same cell, same value, another batch) */
 table.rowdata tr.ref td { border-top-style: dashed; }   /* a new row's "X [ref]" row sits under its value */
 #dialog[data-kind="push"] .sum td, #dialog[data-kind="push"] .sum th { padding: 2px 8px; text-align: left; vertical-align: top; }
 #dialog[data-kind="push"] h4 { margin: 10px 0 4px; }
 .lng-sv, .lng-sr, .lng-sn { width: 100%; box-sizing: border-box; font: inherit; }
+.pipes .pmeta .lng-qmeta { flex: 1 1 8em; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pipes .pmeta .n { flex: 0 1 auto; margin-left: auto; text-align: right; }
+#issues-link[hidden] { display: none; }   /* a.ghost sets display, which would beat the hidden attribute */
