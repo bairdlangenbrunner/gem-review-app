@@ -1,4 +1,4 @@
-/* LNG carriers extension for the shared review app (gem-review-app). Loads after review_core/web/app.js and registers everything LNG-only through ReviewApp.define: vessel cards, the value / ref / new-row lines, the "notes & record" details, the suggest form (kind and refs), Name and Other names as a strict pair, conflict items, the how-to and keyboard text, and the sync and push buttons. The page's store gets the same suggest rules the Python side has through StaticStore.extend. */
+/* LNG carriers extension for the shared review app (gem-review-app). Loads after review_core/web/app.js and registers everything LNG-only through ReviewApp.define: vessel cards, the value / ref / new-row lines, the "researcher notes" details, the suggest form (kind and refs), Name and Other names as a strict pair, conflict items, the how-to and keyboard text, and the sync and push buttons. The page's store gets the same suggest rules the Python side has through StaticStore.extend. */
 (function () {
   "use strict";
   if (!window.ReviewApp || !window.ReviewApp.define) return;
@@ -73,7 +73,6 @@
     }
     function rowLabel(p) { return p.new ? "new row" : p.live_row == null ? "row gone" : "row " + p.live_row; }
     function link(u) { return '<a href="' + esc(u) + '" target="_blank" rel="noopener">' + esc(u) + "</a>"; }
-    function list(urls) { return urls.map(link).join(", "); }
     function short(v, n) { v = String(v == null ? "" : v); return v.length > n ? v.slice(0, n - 1) + "…" : v; }
     // a record a machine or a directed session write made, not a reviewer's click
     function machineCall(l) {
@@ -186,16 +185,11 @@
       }
       return A.pairTable(valueRow(l) + refRow(l));
     }
-    // the "notes & record" details, in the core's markup (app.js detailsHtml): the researcher's note once, the grade's reason once, the links the cell holds now, and the record line
+    // the "researcher notes" details, in the core's markup (app.js detailsHtml): the researcher's note once, nothing else
     function lineDetails(l) {
-      var d = [], note = [l.why].concat(l.detail || []).map(function (t) { return String(t || "").trim(); }).filter(Boolean).join("\n");
-      if (note) d.push('<div class="dtxt"><span class="k">researcher notes</span>' + A.linkText(note) + "</div>");
-      var grade = l.derivable ? "derived from other cells, no page checked" : String(l.confidence_why || "").trim();
-      if (grade) d.push('<div class="dtxt"><span class="k">grade</span>' + esc(grade) + "</div>");
-      if (l.kind !== "new_row" && (l.current_refs || []).length) d.push('<div class="dtxt"><span class="k">current ' + esc(l.ref_column || "[ref]") + "</span>" + list(l.current_refs) + "</div>");
-      var misc = ["batch " + batchOf(l.dir).label, "default " + (l.default || "hold"), "record " + (l.id || "?")];
-      d.push('<div class="dtxt"><span class="k">record</span>' + esc(misc.join(" · ")) + "</div>");
-      return '<details data-more><summary>notes &amp; record</summary>' + d.join("") + "</details>";
+      var note = [l.why].concat(l.detail || []).map(function (t) { return String(t || "").trim(); }).filter(Boolean).join("\n");
+      if (!note) return "";
+      return '<details data-more><summary>researcher notes</summary><div class="dtxt">' + A.linkText(note) + "</div></details>";
     }
     function decisionText(l) {
       if (l._applied && l.decision === "accept") return "accepted";
@@ -497,6 +491,7 @@
       lineChips: lineChips,
       lineBody: lineBody,
       lineDetails: lineDetails,
+      hideRecord: true,
       decisionText: decisionText,
       noteBox: noteBox,
       lineActions: function (l) {

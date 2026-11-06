@@ -317,7 +317,7 @@ test("the line kinds read as what the line does to the cell, and the kind filter
   });
 });
 
-test("the queue badge counts what is left to decide, with the row, yard and owner; the card has no pre-filled chip and keeps the note once under notes & record", function () {
+test("the queue badge counts what is left to decide, with the row, yard and owner; the card has no pre-filled chip and keeps only the note under researcher notes", function () {
   var P = page();
   return P.booted.then(function () {
     var A = P.app.api, q = P.$("pipes").innerHTML;
@@ -331,11 +331,10 @@ test("the queue badge counts what is left to decide, with the row, yard and owne
     A.S.pipe = hit; A.renderCard();
     var h = P.$("card").innerHTML;
     assert.doesNotMatch(h, /pre-filled|lng-why|How sure|Sources to open/);
-    assert.match(h, /<summary>notes &amp; record<\/summary>/);
+    assert.match(h, /<summary>researcher notes<\/summary>/);
     assert.equal((h.match(/the yard release prints the price/g) || []).length, 1);
     assert.match(h, /the yard release prints the price\nthe sister ship carries the same figure/);
-    assert.match(h, /<span class="k">grade<\/span>a live page states the value/);
-    assert.match(h, /<span class="k">record<\/span>batch fix a · default accept · record V1\|Price/);
+    assert.doesNotMatch(h, /a live page states the value|<span class="k">(grade|record)<\/span>|default accept/);
     assert.match(h, /class="pid"[^>]*>12</, "the card id is the sheet row");
   });
 });
