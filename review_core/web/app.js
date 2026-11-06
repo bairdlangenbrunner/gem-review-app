@@ -886,7 +886,7 @@
       '</div></div><div class="ctx">' + ctx + "</div>";
     if (flat) {
       S.shown = [];
-      h += '<div class="flatcard">';
+      h += '</div><div class="flatcard">';   // closes the card head first, so only the head pins
       p.lines.forEach(function (l) {
         S.shown.push(l._i);
         h += '<div class="line tier-' + tierOf(l) + (cur(l) ? " d-" + cur(l) : "") + ((T.dimmed ? T.dimmed(l) : grayed(l)) ? " dim" : "") +
