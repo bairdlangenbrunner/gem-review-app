@@ -134,6 +134,15 @@
     if (parts.length && parts[parts.length - 1] === "staging") parts.pop();
     return parts.length ? parts[parts.length - 1] : String(d || "");
   }
+  // the sheet shows a number the way its cell format says (1,443.00; 246,000.00), so a proposed 1443 or 246000 is the
+  // same value: the row reads "same", never "change" (pipelines EACOP P0541, 2026-11-07). Mirrors the servers' numeric compare.
+  function sameVal(a, b) {
+    var x = String(a == null ? "" : a).trim(), y = String(b == null ? "" : b).trim();
+    if (x === y) return true;
+    if (x === "" || y === "") return false;
+    var nx = Number(x.replace(/,/g, "")), ny = Number(y.replace(/,/g, ""));
+    return !isNaN(nx) && !isNaN(ny) && nx === ny;
+  }
   function tierOf(l) { return l.tier === "high" || l.tier === "medium" || l.tier === "low" ? l.tier : "untiered"; }
   function cur(l) { return l.reviewed && l.decision ? l.decision : null; }
   // drawn grayed once decided (hold stays bright: still open)
@@ -631,7 +640,7 @@
   function valueRow(c, was, now, reverified, l) {
     var wasH = blankv(was) ? "" : "<span>" + esc(was) + "</span>";
     var nowH, t = "", same = false, chars = charOnlyChange(was, now);
-    if (!blankv(was) && String(was).trim() === String(now).trim()) { nowH = wasH; same = true; t = reverified ? "re-verified" : ""; }
+    if (!blankv(was) && sameVal(was, now)) { nowH = wasH; same = true; t = reverified ? "re-verified" : ""; }
     else if (blankv(now)) { nowH = '<span class="newv c-' + tierOf(l || {}) + '">(clear)</span>'; t = "clear"; }
     else if (chars) { t = "characters"; nowH = '<span class="newv c-' + tierOf(l || {}) + '">' + esc(now) + "</span>" + copyBtn(now) + '<div class="charnote">' + esc(chars) + "</div>"; }
     else { t = blankv(was) ? "fill" : "change"; nowH = newvHtml(was, now, "c-" + tierOf(l || {})) + copyBtn(now); }
@@ -2007,7 +2016,7 @@
     NOT_YET: NOT_YET, cards: cards,
     $: $, esc: esc, linkText: linkText, leadOf: leadOf, chip: chip, tipAttrs: tipAttrs, urlLink: urlLink, asList: asList, vmark: vmark, shortLink: shortLink, shortUrl: shortUrl,
     tag: tag, copyBtn: copyBtn, newvHtml: newvHtml, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, tierChip: tierChip, sevChip: sevChip,
-    tierSummary: tierSummary, cur: cur, tierOf: tierOf, sevOf: sevOf, dstate: dstate, blankv: blankv, dirLabel: dirLabel, timeOf: timeOf, et: et,
+    tierSummary: tierSummary, cur: cur, tierOf: tierOf, sevOf: sevOf, dstate: dstate, blankv: blankv, sameVal: sameVal, dirLabel: dirLabel, timeOf: timeOf, et: et,
     toast: toast, banner: banner, copyText: copyText, refilter: refilter, changed: changed, renderQueue: renderQueue, renderCard: renderCard,
     renderActive: renderActive, syncControls: syncControls, setLine: setLine, selectPipe: selectPipe, writeRoute: writeRoute, applyRoute: applyRoute,
     applySaved: applySaved, notYet: notYet, facetSelect: facetSelect, fitSelect: fitSelect, facetCounts: facetCounts, match: match, uniq: uniq, defaults: defaults,

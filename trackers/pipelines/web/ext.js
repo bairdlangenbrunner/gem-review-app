@@ -123,7 +123,7 @@
   }
 
   window.ReviewApp.define(function (A) {
-    var $ = A.$, esc = A.esc, chip = A.chip, tipAttrs = A.tipAttrs, blankv = A.blankv, cur = A.cur, S = A.S;
+    var $ = A.$, esc = A.esc, chip = A.chip, tipAttrs = A.tipAttrs, blankv = A.blankv, sameVal = A.sameVal, cur = A.cur, S = A.S;
     var timeOf = A.timeOf, tierOf = A.tierOf, tag = A.tag, copyBtn = A.copyBtn, shortLink = A.shortLink, urlLink = A.urlLink, pairTable = A.pairTable;
     function FS() { return A.FS; }
     function D() { return A.D; }
@@ -364,7 +364,7 @@
     function valueRow(l, p, c, was, now, has) {
       var wasH = blankv(was) ? "" : "<span>" + esc(was) + "</span>";
       var nowH, t = "", same = false;
-      if (!has || (!blankv(was) && String(was).trim() === String(now).trim())) { nowH = wasH; same = true; }
+      if (!has || (!blankv(was) && sameVal(was, now))) { nowH = wasH; same = true; }   // 1,443.00 on the sheet is 1443 (A.sameVal)
       else if (blankv(now)) { nowH = '<span class="newv c-' + tierOf(l) + '">(clear)</span>'; t = "clear"; }
       else { t = blankv(was) ? "fill" : "change"; nowH = A.newvHtml(was, now, "c-" + tierOf(l)) + copyBtn(now); }
       var r = '<tr class="' + (same ? "same" : "") + '"><td class="f">' + esc(c) + "</td><td>" + wasH + "</td><td>" + nowH + '</td><td class="t">' + tag(t) + "</td></tr>";

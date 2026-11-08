@@ -61,7 +61,7 @@
   window.ReviewApp.define(function (A) {
     // the "record issues" link is off for now
     try { var ri = document.getElementById("issues-link"); if (ri) ri.hidden = true; } catch (e) { /* ignore */ }
-    var $ = A.$, esc = A.esc, chip = A.chip, blankv = A.blankv;
+    var $ = A.$, esc = A.esc, chip = A.chip, blankv = A.blankv, sameVal = A.sameVal;
     var MACHINES = TB.machine_reviewers || ["backend sync", "§5 regrade"];
     var VERB = {accept: "accepted", hold: "held", reject: "rejected", suggest: "suggested"};
 
@@ -144,7 +144,7 @@
       return '<tr class="' + (tag ? "" : "same") + '"><td class="f">' + esc(field) + "</td><td>" + was + "</td><td>" + now + '</td><td class="t">' + A.tag(tag) + "</td></tr>";
     }
     function valueRow(l) {
-      var was = l.current, now = l.proposed, same = !blankv(was) && String(was).trim() === String(now).trim(), t, nowH;
+      var was = l.current, now = l.proposed, same = !blankv(was) && sameVal(was, now), t, nowH;
       if (same) { nowH = esc(now); t = ""; }
       else if (blankv(now)) { nowH = '<span class="newv c-' + A.tierOf(l) + '">(clear)</span>'; t = "clear"; }
       else { t = blankv(was) ? "fill" : "change"; nowH = A.newvHtml(was, now, "c-" + A.tierOf(l)) + A.copyBtn(now); }
