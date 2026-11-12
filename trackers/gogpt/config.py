@@ -61,6 +61,7 @@ CONFIG = TrackerConfig(
     record_fields=record_fields,
     index_entry=index_entry,
     exports=exports,
+    show_others=True,    # two reviewers on one page see each other's calls live (Amalia and Baird, 2026-11-10)
     caps={"decide": True, "flag": True},   # flag: the ask-the-PM marker; the core derives no cap from a marker
     web_dir=Path(__file__).resolve().parent / "web",
     port=8767,

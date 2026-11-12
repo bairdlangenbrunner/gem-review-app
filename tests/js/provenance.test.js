@@ -187,3 +187,20 @@ test("pipelines details: without ReviewGeo the text and facts still render", fun
     assert.ok(h.indexOf("rimgs") < 0 && h.indexOf("rcpts") < 0);
   });
 });
+
+test("pipelines new row: every data point first, then every source link in one sources table, as on the GOGPT and LNG pages", function () {
+  var cap = "window.__T = null; (function () { var d = window.ReviewApp.define; window.ReviewApp.define = function (t) {" +
+    " var f = typeof t === 'function' ? function (A) { return (window.__T = t(A)); } : (window.__T = t); return d.call(this, f); }; })();";
+  var store = {caps: {decide: true}, whoami: function () { return Promise.resolve("BL"); },
+               load: function () { return Promise.resolve({built: "2026-10-01T00:00:00-04:00", dirs: ["a"], cards: []}); },
+               decide: function () { return Promise.resolve([]); }, item: function () { return Promise.resolve([]); }};
+  var P = stub.page({globals: {StaticStore: store}, before: opts_geo(), after: [[cap, "wrap.js"], [PIPELINES_EXT, "ext.js"]]});
+  return P.booted.then(function () {
+    var h = P.ctx.__T.lineBody({kind: "new_row", proposed_values: {Name: "Lowman lateral", Status: "proposed"},
+                                proposed_refs: {"Name Ref": ["https://example.org/a"], "Status Ref": ["https://example.org/b"]}});
+    var order = ["<td>Name</td>", "<td>Status</td>", ">sources<", "<td>Name Ref</td>", "<td>Status Ref</td>"];
+    var at = order.map(function (s) { return h.indexOf(s); });
+    at.forEach(function (i, n) { assert.ok(i >= 0, order[n] + " present"); if (n) assert.ok(i > at[n - 1], order[n] + " after " + order[n - 1]); });
+    assert.doesNotMatch(h, /unchecked/, "no check marks when the candidate's links were not checked");
+  });
+});
