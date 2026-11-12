@@ -1,0 +1,26 @@
+# Tests on every push and pull request: the Python suite, which also runs the JS suite in tests/js through node,
+# then the consumer check. In CI no researcher repo is checked out next to this one, so check_consumers.py
+# finds no consumers and only proves it runs; run it locally to check the live pages.
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: install
+        run: pip install "pytest>=8.0" pillow    # pillow: the asset and basemap tests skip without it
+      - name: pytest
+        run: pytest -q
+      - name: consumer check
+        run: python scripts/check_consumers.py --check
