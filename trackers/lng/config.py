@@ -163,6 +163,7 @@ CONFIG = TrackerConfig(
     exports=exports,
     routes=routes,
     caps={"decide": True, "refresh": False, "push": False},
+    show_others=True,    # Baird and Rob on one page see each other's calls live (2026-11-12)
     dynamic_caps=dynamic_caps,
     web_dir=Path(__file__).resolve().parent / "web",
     port=8765,

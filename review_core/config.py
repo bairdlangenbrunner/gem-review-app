@@ -65,6 +65,7 @@ class TrackerConfig:
     info_kinds: set = field(default_factory=set)
     references: bool = True
     markers: dict = field(default_factory=dict)
+    show_others: bool = False     # the published page lays every viewer's calls over the data, not only this browser's
     extra_record_types: dict = field(default_factory=dict)
     record_fields: Optional[Callable] = None
     legacy_keys: Optional[Callable] = None
@@ -99,6 +100,7 @@ class TrackerConfig:
                 "machine_reviewers": sorted(self.machine_reviewers),
                 "info_kinds": sorted(self.info_kinds), "references": self.references,
                 "caps": dict(self.caps), "markers": {k: dict(v) for k, v in self.markers.items()},
+                "show_others": bool(self.show_others),
                 "rules": page_rules()}
 
 
