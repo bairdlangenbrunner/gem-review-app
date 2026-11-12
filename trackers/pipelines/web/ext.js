@@ -467,14 +467,11 @@
       var tr = Object.keys(vals).filter(function (c) { return !blankv(vals[c]); }).map(function (c) {
         return "<tr><td>" + esc(c) + "</td><td>" + esc(vals[c]) + copyBtn(vals[c]) + "</td></tr>";
       });
-      Object.keys(refs).forEach(function (c) {
-        var us = Array.isArray(refs[c]) ? refs[c] : [refs[c]];
-        if (!us.length) return;
-        tr.push("<tr><td>" + esc(c) + "</td><td>" + us.map(function (u) { return urlLink(u) + copyBtn(u); }).join("<br>") + "</td></tr>");
-      });
+      // all the data points above, all the source links below; check marks only when the candidate's links were checked at staging
+      var src = Object.keys(refs).map(function (c) { return [c, Array.isArray(refs[c]) ? refs[c] : [refs[c]]]; });
       var h = l["class"] === "matched_existing"
         ? '<div class="row1">' + chip("matches existing " + (l.matched_project_id || ""), "newrow") + ' <span class="faint">candidate data for a pipeline already tracked</span></div>' : "";
-      return h + '<table class="rowdata">' + tr.join("") + "</table>";
+      return h + '<table class="rowdata">' + tr.join("") + "</table>" + A.sourcesTable(src, (l.verifications || []).length ? function (u) { return vmark(u, l); } : null);
     }
     // how the route or value was made: the paragraph, the facts, the map pictures and the control points (plan, "Geo")
     function provenanceHtml(pv) {

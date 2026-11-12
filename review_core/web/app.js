@@ -128,12 +128,6 @@
   }
   function isItemKind(k) { return ITEM_KINDS.indexOf(k) >= 0; }
   function blankv(v) { return v == null || String(v).trim() === ""; }
-  // "batches/us-md/staging" -> "us-md"
-  function dirLabel(d) {
-    var parts = String(d || "").split("/").filter(Boolean);
-    if (parts.length && parts[parts.length - 1] === "staging") parts.pop();
-    return parts.length ? parts[parts.length - 1] : String(d || "");
-  }
   // the sheet shows a number the way its cell format says (1,443.00; 246,000.00), so a proposed 1443 or 246000 is the
   // same value: the row reads "same", never "change" (pipelines EACOP P0541, 2026-11-07). Mirrors the servers' numeric compare.
   function sameVal(a, b) {
@@ -142,6 +136,12 @@
     if (x === "" || y === "") return false;
     var nx = Number(x.replace(/,/g, "")), ny = Number(y.replace(/,/g, ""));
     return !isNaN(nx) && !isNaN(ny) && nx === ny;
+  }
+  // "batches/us-md/staging" -> "us-md"
+  function dirLabel(d) {
+    var parts = String(d || "").split("/").filter(Boolean);
+    if (parts.length && parts[parts.length - 1] === "staging") parts.pop();
+    return parts.length ? parts[parts.length - 1] : String(d || "");
   }
   function tierOf(l) { return l.tier === "high" || l.tier === "medium" || l.tier === "low" ? l.tier : "untiered"; }
   function cur(l) { return l.reviewed && l.decision ? l.decision : null; }
@@ -269,9 +269,11 @@
     });
     S.countText = nl + " " + (nl === 1 ? W.line : W.lines) + (ni ? " + " + plural(ni, "item") : "") +
       " on " + S.visible.length + " " + (S.visible.length === 1 ? W.card : W.cards);
-    if (S.visible.indexOf(S.pipe) < 0) {
+    if (S.visible.indexOf(S.pipe) < 0 || (S.hideDone && queueHides(S.pipe))) {
       var keepIn = S.visible.filter(function (i) { return !queueHides(i); });
-      S.pipe = keepIn.length ? keepIn[0] : S.visible.length ? S.visible[0] : -1;
+      // the next card after the one just finished, else the first; none left shows the all-done note
+      var after = keepIn.filter(function (i) { return i > S.pipe; });
+      S.pipe = after.length ? after[0] : keepIn.length ? keepIn[0] : S.hideDone ? -1 : S.visible.length ? S.visible[0] : -1;
     }
     if (all[S.pipe] !== sel) { S.line = -1; S.tab = defaultTab(all[S.pipe]); S.igOpen = {}; }
     renderChips();
@@ -474,7 +476,8 @@
     var p = cards()[i];
     if (!p) return false;
     if (T.queueShows && !T.queueShows(p)) return true;      // even the open card: a tab with nothing in it lists nothing
-    return i !== S.pipe && ((S.hideDone && cardDone(p)) || (S.hideItems && cardHasItems(p)));
+    // a done card leaves even when open (unless pinned by the "all" tab); "hide done" off is the way to see it. Items-only hiding still spares the open card
+    return (S.hideDone && cardDone(p) && i !== S.pin) || (i !== S.pipe && S.hideItems && cardHasItems(p));
   }
   function renderQueue() {
     if (T.renderQueue && T.renderQueue()) return;     // the tracker drew the pane itself (GOGPT checklist view)
@@ -670,8 +673,16 @@
     }
     return '<tr class="ref"><td class="f">' + esc(col) + "</td><td>" + nowH + "</td><td>" + propH + '</td><td class="t">' + tag(t) + "</td></tr>";
   }
-  function pairTable(rows) {
-    return '<table class="pair"><thead><tr><th></th><th>now</th><th>proposed</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>";
+  // a new row's source links, below the data points they back on every tracker (GOGPT: one table per plant or unit block): one "sources" table of [label, [url]] rows,
+  // each link with a copy button and its check mark (mark(u) from the tracker; none when it has no checks for new rows)
+  function sourcesTable(rows, mark) {
+    var tr = rows.filter(function (r) { return r[1] && r[1].length; }).map(function (r) {
+      return '<tr class="ref"><td>' + esc(r[0]) + "</td><td>" + r[1].map(function (u) { return urlLink(u) + copyBtn(u) + (mark ? " " + mark(u) : ""); }).join("<br>") + "</td></tr>";
+    });
+    return tr.length ? '<div class="srchead">sources</div><table class="rowdata refs">' + tr.join("") + "</table>" : "";
+  }
+  function pairTable(rows, opts) {   // opts.noNow: no now column (a new row has nothing there)
+    return '<table class="pair' + (opts && opts.noNow ? " nonow" : "") + '"><thead><tr><th></th><th>now</th><th>proposed</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>";
   }
   function lineBody(l) {
     if (T.lineBody) { var x = T.lineBody(l, cards()[l._p]); if (x != null) return x; }
@@ -880,7 +891,7 @@
   function renderCard() {
     var card = $("card");
     if (S.panel && T.cardPanel) { card.innerHTML = T.cardPanel(S.panel); S.shown = []; return; }
-    if (S.pipe < 0) { card.innerHTML = '<div class="empty">nothing matches the filters.</div>'; S.shown = []; return; }
+    if (S.pipe < 0) { card.innerHTML = '<div class="empty">' + (S.visible.length && S.hideDone ? "every " + W.card + " in view is done. Turn off \u201chide done\u201d to see them." : "nothing matches the filters.") + "</div>"; S.shown = []; return; }
     var p = cards()[S.pipe], q = FS.q.trim().toLowerCase();
     var ctx = (T.cardContext ? T.cardContext(p) : [tierSummary(p)])
       .filter(Boolean).map(function (x) { return "<span>" + x + "</span>"; }).join("");
@@ -2015,7 +2026,7 @@
     get KIND_LABEL() { return KIND_LABEL; }, get CALL_LABEL() { return CALL_LABEL; }, get SEV_LABEL() { return SEV_LABEL; },
     NOT_YET: NOT_YET, cards: cards,
     $: $, esc: esc, linkText: linkText, leadOf: leadOf, chip: chip, tipAttrs: tipAttrs, urlLink: urlLink, asList: asList, vmark: vmark, shortLink: shortLink, shortUrl: shortUrl,
-    tag: tag, copyBtn: copyBtn, newvHtml: newvHtml, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, tierChip: tierChip, sevChip: sevChip,
+    tag: tag, copyBtn: copyBtn, newvHtml: newvHtml, valueRow: valueRow, valueRows: valueRows, refRow: refRow, pairTable: pairTable, sourcesTable: sourcesTable, tierChip: tierChip, sevChip: sevChip,
     tierSummary: tierSummary, cur: cur, tierOf: tierOf, sevOf: sevOf, dstate: dstate, blankv: blankv, sameVal: sameVal, dirLabel: dirLabel, timeOf: timeOf, et: et,
     toast: toast, banner: banner, copyText: copyText, refilter: refilter, changed: changed, renderQueue: renderQueue, renderCard: renderCard,
     renderActive: renderActive, syncControls: syncControls, setLine: setLine, selectPipe: selectPipe, writeRoute: writeRoute, applyRoute: applyRoute,

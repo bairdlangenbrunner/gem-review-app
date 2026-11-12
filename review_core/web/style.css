@@ -99,7 +99,7 @@ code { font-family: ui-monospace, Menlo, monospace; font-size: 14px; overflow-wr
 .slot:empty { display: none; }
 
 .queue { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(260px, 340px) 1fr; }
-.pane { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+.pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow-x: hidden; border-right: 1px solid var(--line); }
 .hide-row { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 6px 14px; border-bottom: 1px solid var(--line); }
 .hide-done { display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); cursor: pointer; }
 .hide-done input { appearance: none; -webkit-appearance: none; flex: none; position: relative; width: 34px; height: 20px; margin: 0; border-radius: 10px; background: var(--line); border: 1px solid var(--muted); cursor: pointer; transition: background .15s; }
@@ -107,17 +107,18 @@ code { font-family: ui-monospace, Menlo, monospace; font-size: 14px; overflow-wr
 .hide-done input:checked { background: var(--accent); border-color: var(--accent); }
 .hide-done input:checked::after { transform: translateX(14px); background: var(--panel); }
 .hide-done input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.pipes { margin: 0; padding: 0; list-style: none; overflow-y: auto; flex: 1; min-height: 0; }
-.pipes li { padding: 8px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.pipes { margin: 0; padding: 0; list-style: none; overflow-y: auto; overflow-x: hidden; flex: 1; min-height: 0; }
+.pipes li { min-width: 0; padding: 8px 14px; border-bottom: 1px solid var(--line); cursor: pointer; }
 .pipes li.sel { background: var(--sel); }
 /* a section header in the queue (T.queueSection): not a card, not clickable */
 .pipes li.qsec { cursor: default; padding: 10px 14px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); background: var(--bg); border-bottom: none; }
 .pipes li.qsec .n { font-weight: 400; letter-spacing: 0; text-transform: none; }
 .pipes .pname { font-weight: 600; overflow-wrap: anywhere; }
 .pipes .pseg { font-weight: 400; color: var(--muted); }
-.pipes .pmeta { color: var(--muted); font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
+.pipes .pmeta { color: var(--muted); font-size: 14px; display: flex; flex-wrap: wrap; gap: 0 8px; align-items: baseline; min-width: 0; }
+.pipes .pmeta > span:first-child { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pipes .pmeta .grow { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pipes .n { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pipes .n { margin-left: auto; white-space: normal; text-align: right; font-variant-numeric: tabular-nums; }
 .pipes .n.todo { color: var(--hold); font-weight: 600; }
 .pipes .dots { display: flex; gap: 3px; margin-top: 2px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--line); }
@@ -153,7 +154,9 @@ code { font-family: ui-monospace, Menlo, monospace; font-size: 14px; overflow-wr
 /* now / proposed table: one row per paired column (value cols, then the [ref]); the tag says what the line does to it */
 table.pair { border-collapse: collapse; width: 100%; table-layout: fixed; margin: 8px 0 4px; font-size: 14.5px; }
 table.pair th { text-align: left; font-weight: 400; font-size: 12.5px; color: var(--muted); padding: 0 8px 2px; }
-table.pair th:nth-child(1) { width: 22%; } table.pair th:nth-child(2) { width: 32%; }
+table.pair th:nth-child(1) { width: 10em; }   /* now and proposed split what is left evenly */
+/* a line with nothing on the now side (a new row) drops the column so proposed gets the width */
+table.pair.nonow th:nth-child(2), table.pair.nonow td:nth-child(2) { display: none; }
 table.pair th:nth-child(4) { width: 5.5em; }
 table.pair td { border-top: 1px solid var(--line); padding: 5px 8px; vertical-align: top; overflow-wrap: anywhere; }
 table.pair td.f { color: var(--muted); font-size: 13.5px; }
@@ -176,7 +179,7 @@ table.pair .newv { font-size: 15px; padding: 1px 6px; }
 .tag-clear, .tag-drop { color: var(--reject); }
 .tag-re-verified { color: var(--t-rev-ink); }
 .facts { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
-@media (max-width: 760px) { table.pair th:nth-child(1) { width: 26%; } table.pair { font-size: 13.5px; } }
+@media (max-width: 760px) { table.pair th:nth-child(1) { width: 7.5em; } table.pair { font-size: 13.5px; } }
 .chg { display: grid; grid-template-columns: minmax(6em, 11em) 1fr; gap: 3px 12px; align-items: baseline; }
 .chg .k { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 .chg .v { overflow-wrap: anywhere; }
@@ -238,6 +241,7 @@ details .dtxt:first-of-type { margin-top: 8px; }
 table.rowdata { border-collapse: collapse; font-size: 14px; margin: 6px 0; width: 100%; table-layout: fixed; }
 table.rowdata td { border-top: 1px solid var(--line); padding: 4px 8px; vertical-align: top; overflow-wrap: anywhere; }
 table.rowdata td:first-child { color: var(--muted); width: 30%; }
+.srchead { margin: 12px 0 0; font-size: 14px; font-weight: 600; }
 .newcard { border-left: 4px solid var(--t-new-ink); }
 .newcard .ttl { background: var(--t-new); color: var(--t-new-ink); display: inline-block; padding: 0 8px; border-radius: 4px; }
 
