@@ -47,6 +47,8 @@ gogpt already has this file (name, title, reviewer, url, dirs). pipelines gets o
 
 `fingerprint` is the hash of `parts`; `parts` exists so the check can say which input changed. Initial pipelines entries: the gas batch page `https://claude.ai/artifact/31WzSbN54wUGHAaPirimcz` (kind `artifact`, batch scope, gas) and the Google scope `review-app-gas` (kind `google`, batch scope, gas). Their `published` blocks start empty, which the check reports as "never marked"; the first real build and publish fills them.
 
+**Split registry (2026-11-12).** A repo can keep the `published` blocks out of `artifacts.json` by passing `published_dir` to `pages.cli` (and to `load_entries`, `mark_published`, `mark_current` when it calls them itself). Each page's block then lives in `<published_dir>/<name>.json`, `--mark-published` writes only that file, and `artifacts.json` stays hand-edited. lng-carriers-researcher does this (`review_app/published/`), because two maintainers publishing different pages kept conflicting on the one registry file. gogpt and pipelines keep the blocks inline.
+
 ### 2. Shared logic: `review_core/pages.py`
 
 Both repos need identical semantics, so the logic lives in the core and each repo supplies a small adapter. The core never imports from a researcher repo (plan.md rule), so the adapter is passed in.

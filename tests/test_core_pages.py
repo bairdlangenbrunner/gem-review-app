@@ -445,3 +445,38 @@ def test_cli_assets_without_an_assets_list_says_so(env, capsys):
     assert cap.out == "" and "no pictures" in cap.err
     with pytest.raises(SystemExit, match="no page named nope"):
         run_cli(env, ["--assets", "nope"])
+
+
+def test_published_dir_keeps_the_registry_untouched(env, capsys):
+    pub_dir = env["root"] / "published"
+    before = env["entries"].read_text()
+    fp, parts = pages.fingerprint(entry(env), env["adapter"], env["config"])
+    pages.record_build(env["last"], "one", fp, parts, "2026-11-12T10:00:00-05:00")
+    pub = pages.mark_published(env["entries"], "one", env["last"], env["adapter"], env["config"],
+                               now="2026-11-12T10:05:00-05:00", profile="gem", published_dir=pub_dir)
+    assert env["entries"].read_text() == before                      # the hand-edited registry is not rewritten
+    assert json.loads((pub_dir / "one.json").read_text()) == pub and pub["fingerprint"] == fp
+    assert "published" not in entry(env)                             # read without the folder: no block
+    got = next(e for e in pages.load_entries(env["entries"], pub_dir) if e["name"] == "one")
+    assert got["published"] == pub
+    assert next(r for r in pages.check(pages.load_entries(env["entries"], pub_dir), env["adapter"], env["config"])
+                if r["name"] == "one")["status"] == "fresh"
+    run_cli(env, ["--list"], published_dir=pub_dir)
+    assert capsys.readouterr().out.splitlines()[1].endswith("2026-11-12T10:05:00-05:00")
+    run_cli(env, ["--only", "one"], published_dir=pub_dir)
+    run_cli(env, ["--mark-published", "one"], published_dir=pub_dir)
+    assert "one marked published" in capsys.readouterr().out and env["entries"].read_text() == before
+    pages.mark_current(env["entries"], "two", env["last"], env["adapter"], env["config"], "t3", published_dir=pub_dir)
+    assert (pub_dir / "two.json").is_file() and env["entries"].read_text() == before
+    with pytest.raises(SystemExit) as e:
+        run_cli(env, ["--check"], published_dir=pub_dir)
+    assert e.value.code == 0
+
+
+def test_published_dir_block_wins_over_one_left_in_the_registry(env):
+    publish(env)                                                     # the old way: block inside the entry
+    pub_dir = env["root"] / "published"
+    pub_dir.mkdir()
+    (pub_dir / "one.json").write_text(json.dumps({"fingerprint": "x", "at": "later"}))
+    got = next(e for e in pages.load_entries(env["entries"], pub_dir) if e["name"] == "one")
+    assert got["published"] == {"fingerprint": "x", "at": "later"}
