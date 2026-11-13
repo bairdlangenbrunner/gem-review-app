@@ -539,7 +539,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
     artifact = [e for e in entries if e.get("kind") != "google"]
     for e in entries:
         if e.get("kind") == "google":
-            print(f"{e['name']}\tgoogle\trefresh with: {GOOGLE_REFRESH} (ask Baird first)")
+            print(f"{e['name']}\tgoogle\trefresh with: {GOOGLE_REFRESH}")
     if not artifact:
         return 0
     try:
