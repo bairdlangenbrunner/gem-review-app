@@ -8,6 +8,8 @@ An entry's `published` block holds what the live page was built from:
     {"built": ts, "at": ts, "profile": "gem"|"personal", "fingerprint": sha, "parts": {...}}
 
 `parts` is {"interface": sha, "builder": sha, "dirs": {label: sha}, "decisions": {label: sha}, **extra_inputs}. `fingerprint` is the hash of `parts`; `parts` exists so a check can say which input changed.
+
+A repo may keep the `published` blocks out of the registry: pass `published_dir` (to load_entries, mark_published, mark_current and cli) and each page's block lives in `<published_dir>/<name>.json` instead, so the registry stays hand-edited only and two people publishing different pages never touch the same file (lng-carriers-researcher, 2026-11-12). A block in that folder wins over one still inside the registry entry. Without `published_dir` the block is written into the entry as before.
 """
 import argparse
 from dataclasses import dataclass
@@ -235,8 +237,20 @@ def check(entries, adapter, config):
     return out
 
 
-def load_entries(path):
-    return json.loads(Path(path).read_text(encoding="utf-8")).get("pages", [])
+def published_path(published_dir, name):
+    """The file that holds page `name`'s published block when the repo keeps the blocks out of its registry."""
+    return Path(published_dir) / f"{name}.json"
+
+
+def load_entries(path, published_dir=None):
+    """The registry's page entries; with `published_dir`, each entry's `published` block is read from its own file there."""
+    entries = json.loads(Path(path).read_text(encoding="utf-8")).get("pages", [])
+    if published_dir:
+        for e in entries:
+            f = published_path(published_dir, e.get("name", ""))
+            if f.is_file():
+                e["published"] = json.loads(f.read_text(encoding="utf-8"))
+    return entries
 
 
 def current_profile():
@@ -378,9 +392,10 @@ def _entry_span(text, name):
     raise KeyError(name)
 
 
-def mark_published(entries_path, name, last_build_path, adapter, config, now=None, profile=None):
+def mark_published(entries_path, name, last_build_path, adapter, config, now=None, profile=None, published_dir=None):
     """Record the last build of page `name` as the published state. Refuses (PublishError) when the
-    inputs changed since that build. Only the named entry's text is rewritten; the rest of the file is left byte-identical."""
+    inputs changed since that build. With `published_dir` the block is written to `<published_dir>/<name>.json` and the
+    registry is not touched; otherwise only the named entry's text is rewritten and the rest of the file is left byte-identical."""
     from datetime import datetime
     entries_path = Path(entries_path)
     text = entries_path.read_text(encoding="utf-8")
@@ -396,6 +411,11 @@ def mark_published(entries_path, name, last_build_path, adapter, config, now=Non
     entry = {k: v for k, v in entry.items() if k != "published"}
     entry["published"] = {"built": last["built"], "at": now or datetime.now().astimezone().isoformat(timespec="seconds"),
                           "profile": profile or current_profile(), "fingerprint": fp, "parts": last["parts"]}
+    if published_dir:
+        f = published_path(published_dir, name)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(_fmt(entry["published"], 0) + "\n", encoding="utf-8")
+        return entry["published"]
     s, e = _entry_span(text, name)
     line_start = text.rfind("\n", 0, s) + 1
     ind = (s - line_start) // 2
@@ -403,14 +423,14 @@ def mark_published(entries_path, name, last_build_path, adapter, config, now=Non
     return entry["published"]
 
 
-def mark_current(entries_path, name, last_build_path, adapter, config, built):
+def mark_current(entries_path, name, last_build_path, adapter, config, built, published_dir=None):
     """Record the inputs as they are now as what page `name` was built from, then mark it published. For a page whose own publish step already ran its pull and build (the Google page: publish.py after a successful upload)."""
-    entry = next((e for e in load_entries(entries_path) if e["name"] == name), None)
+    entry = next((e for e in load_entries(entries_path, published_dir) if e["name"] == name), None)
     if entry is None:
         raise KeyError(name)
     fp, parts = fingerprint(entry, adapter, config)
     record_build(last_build_path, name, fp, parts, built)
-    return mark_published(entries_path, name, last_build_path, adapter, config)
+    return mark_published(entries_path, name, last_build_path, adapter, config, published_dir=published_dir)
 
 
 def _url(e):
@@ -418,7 +438,7 @@ def _url(e):
 
 
 def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, description="",
-        columns=(("url", _url),), pull=None):
+        columns=(("url", _url),), pull=None, published_dir=None):
     """The `build_all.py` command line both researcher repos share. Flags:
 
         --check               fresh / stale (why) / unmarked per page; exit 1 if any is not fresh
@@ -430,7 +450,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
         --force-lock          build even while another session holds the publish lock (its build is abandoned)
         --hook EVENT          Claude Code hook mode: prints the JSON contract of hooks.hook
 
-    adapter: the repo's PageAdapter (its cache, when set, is saved after each full check). registry: review_app/artifacts.json. build_page(entry, args) -> (file, built timestamp) builds one artifact page; `args.no_pull` says whether it may pull. pull(args), when given, runs before the stale check of a build, so decisions pulled into the local logs count as inputs (gogpt). Without it the build does its own pull (pipelines' build_static, which warns and goes on from the local logs when the pull fails). columns: [(header, entry -> text)] shown after the name. A google page is never built here: the build prints its refresh command, and --mark-published refuses it because that command marks it itself.
+    adapter: the repo's PageAdapter (its cache, when set, is saved after each full check). registry: review_app/artifacts.json. build_page(entry, args) -> (file, built timestamp) builds one artifact page; `args.no_pull` says whether it may pull. pull(args), when given, runs before the stale check of a build, so decisions pulled into the local logs count as inputs (gogpt). Without it the build does its own pull (pipelines' build_static, which warns and goes on from the local logs when the pull fails). columns: [(header, entry -> text)] shown after the name. published_dir: keep each page's published block in its own file there instead of in the registry (see the module docstring). A google page is never built here: the build prints its refresh command, and --mark-published refuses it because that command marks it itself.
 
     One session publishes at a time: a build takes `work/.review_publish.lock` (this session's id, the pages being built) before it writes anything, and `--mark-published` releases it. While another session holds a live lock (younger than LOCK_TTL) the build exits 3 with that session's id and start time, so two sessions never build the same html and race for the artifact. A build that fails releases the lock itself; a session that never marks leaves it to expire.
     """
@@ -447,7 +467,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
     a = ap.parse_args(argv)
 
     def reports():
-        out = check(load_entries(registry), adapter, config)
+        out = check(load_entries(registry, published_dir), adapter, config)
         if adapter.cache is not None:
             adapter.cache.save()
         return out
@@ -464,18 +484,18 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
         return 0
     if a.mark_published:
         name = a.mark_published
-        entry = next((e for e in load_entries(registry) if e["name"] == name), None)
+        entry = next((e for e in load_entries(registry, published_dir) if e["name"] == name), None)
         if entry and entry.get("kind") == "google":
             raise SystemExit(f"{name} is the Google page: {GOOGLE_REFRESH} marks it")
         try:
-            pub = mark_published(registry, name, last_build, adapter, config)
+            pub = mark_published(registry, name, last_build, adapter, config, published_dir=published_dir)
         except (PublishError, KeyError) as e:
             raise SystemExit(f"not marked: {e}")
         print(f"{name} marked published ({pub['profile']} profile, built {pub['built']})"
               + ("; publish lock released" if release_lock(work, name) else ""))
         return 0
     if a.assets:
-        entry = next((e for e in load_entries(registry) if e["name"] == a.assets), None)
+        entry = next((e for e in load_entries(registry, published_dir) if e["name"] == a.assets), None)
         if entry is None:
             raise SystemExit(f"no page named {a.assets} in artifacts.json")
         if not adapter.assets:
@@ -489,7 +509,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
         return 0
     if a.list:
         print("\t".join(["name", *[h for h, _ in columns], "published at"]))
-        for e in load_entries(registry):
+        for e in load_entries(registry, published_dir):
             print("\t".join([e["name"], *[str(f(e)) for _, f in columns], (e.get("published") or {}).get("at", "")]))
         return 0
     if a.check:
@@ -504,7 +524,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
         sys.exit(1 if bad else 0)
     if pull:
         pull(a)        # before the stale check: pulled calls change what a page is built from
-    entries = load_entries(registry)
+    entries = load_entries(registry, published_dir)
     if a.only:
         entries = [e for e in entries if e["name"] == a.only]
         if not entries:
@@ -519,7 +539,7 @@ def cli(adapter, registry, build_page, argv=None, *, config, last_build, work, d
     artifact = [e for e in entries if e.get("kind") != "google"]
     for e in entries:
         if e.get("kind") == "google":
-            print(f"{e['name']}\tgoogle\trefresh with: {GOOGLE_REFRESH} (ask Baird first)")
+            print(f"{e['name']}\tgoogle\trefresh with: {GOOGLE_REFRESH}")
     if not artifact:
         return 0
     try:

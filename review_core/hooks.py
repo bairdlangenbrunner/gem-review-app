@@ -35,7 +35,7 @@ def report_file(work, sid):
 
 def _instruction(r):
     if r["kind"] == "google":
-        return "refresh with publish.py --upload --yes (ask Baird first)"
+        return "refresh with publish.py --upload --yes"
     where = r["url"] or "its url"
     return (f"rebuild with build_all.py --only {r['name']}, publish to {where} with the Artifact tool "
             f"from the work profile, then build_all.py --mark-published {r['name']}")
