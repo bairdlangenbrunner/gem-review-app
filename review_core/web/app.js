@@ -835,10 +835,21 @@
       '<span class="dstat" id="istat-' + it._i + '" role="status">' + esc(itemStat(it)) + "</span></div>";
   }
   function isOpenItem(it) { return !(it.call && it.reviewed); }
-  // items grouped (T.itemGroup, else by kind), each group a collapsible section; `only` restricts to the items the filters let through
-  function itemsHtml(p, only) {
+  // "hide done" works inside the open card too: a decided line or called item is left out, so the card shows only what is still waiting on a call.
+  // Not on the everything tab, not on a card pinned by "show all" / "show them", and a line decided on this card stays until the card is left (S.stay), so its undo is in reach.
+  function hidesDone() { return !!S.hideDone && S.pin !== S.pipe; }
+  function doneLine(l) { return !isOpen(l) && !S.stay[l.key]; }
+  function doneItem(it) { return !isOpenItem(it) && !S.stay[it.key]; }
+  function doneNote(n) {
+    return n ? '<div class="hiddennote">' + n + " decided " + (n === 1 ? W.line + " is" : W.lines + " are") + ' hidden by \u201chide done\u201d. <a href="#" class="only" data-showdone="1">show them</a></div>' : "";
+  }
+  // items grouped (T.itemGroup, else by kind), each group a collapsible section; `only` restricts to the items the filters let through, `noDone` drops the called ones (hide done)
+  function itemsHtml(p, only, noDone) {
     var q = FS.q.trim().toLowerCase(), list = p.items.filter(function (it) { return !INFO_KINDS[it.kind]; }), total = list.length;
     if (only) list = list.filter(function (it) { return match(it, p, FS, null, q); });
+    var nCalled = 0;
+    if (noDone) { var n0 = list.length; list = list.filter(function (it) { return !doneItem(it); }); nCalled = n0 - list.length; total -= nCalled; }
+    if (!list.length && nCalled && !(total - list.length)) return "";
     var hidden = total - list.length;
     if (!list.length) return '<div class="hiddennote">' + (hidden ? hidden + " item" + (hidden === 1 ? " is" : "s are") + ' hidden by the filter. <a href="#" class="only" data-showall="1">show all</a>' : "nothing to decide on this " + W.card + ".") + "</div>";
     var G = T.itemGroup || {of: function (it) { return it.kind; }, order: function () { return ITEM_KINDS.slice(); },
@@ -907,12 +918,15 @@
     if (flat) {
       S.shown = [];
       h += '</div><div class="flatcard">';   // closes the card head first, so only the head pins
-      p.lines.forEach(function (l) {
+      var flatLines = p.lines.filter(function (l) { return !hidesDone() || !doneLine(l); });
+      flatLines.forEach(function (l) {
         S.shown.push(l._i);
         h += '<div class="line tier-' + tierOf(l) + (cur(l) ? " d-" + cur(l) : "") + ((T.dimmed ? T.dimmed(l) : grayed(l)) ? " dim" : "") +
           (T.lineClass ? T.lineClass(l) : "") + (l._i === S.line ? " cur" : "") + '" id="line-' + l._i + '" data-i="' + l._i + '">' + lineHtml(l) + "</div>";
       });
-      if (p.items.some(function (it) { return !INFO_KINDS[it.kind]; })) h += itemsHtml(p);
+      if (p.items.some(function (it) { return !INFO_KINDS[it.kind]; })) h += itemsHtml(p, false, hidesDone());
+      var calledItems = hidesDone() ? p.items.filter(function (it) { return !INFO_KINDS[it.kind] && doneItem(it); }).length : 0;
+      h += doneNote(p.lines.length - flatLines.length + calledItems);
       card.innerHTML = h + "</div>";
       if (S.line < 0 || S.shown.indexOf(S.line) < 0) S.line = S.shown.length ? S.shown[0] : -1;
       var fel = S.line >= 0 && $("line-" + S.line);
@@ -953,6 +967,8 @@
     var keep = all ? p.lines.slice() : base.filter(function (l) { return match(l, p, FS, null, q); });
     var hidden = base.length - keep.length;
     if (S.pin === S.pipe && !keep.length) { keep = base.slice(); hidden = 0; }
+    var nDone = 0;
+    if (!all && hidesDone()) { var before = keep.length; keep = keep.filter(function (l) { return !doneLine(l); }); nDone = before - keep.length; }
     var groups = (T.groupLines && T.groupLines(p, keep)) || [{label: "", lines: keep, plain: true}];
     S.shown = [];
     var firstSeg = true;
@@ -968,7 +984,8 @@
     });
     if (hidden) h += '<div class="hiddennote">' + hidden + " more " + (hidden === 1 ? W.line : W.lines) + " on this " + W.card + " " + (hidden === 1 ? "is" : "are") +
       ' hidden by the filter. <a href="#" class="only" data-showall="1">show all</a></div>';
-    if (!keep.length && !hidden) h += '<div class="hiddennote">no ' + (SEV_LABEL[S.tab] || W.lines) + ' on this ' + W.card + '.</div>';
+    h += doneNote(nDone);
+    if (!keep.length && !hidden && !nDone) h += '<div class="hiddennote">no ' + (SEV_LABEL[S.tab] || W.lines) + ' on this ' + W.card + '.</div>';
     if (all) h += '<h3 class="allitems">items</h3>' + itemsHtml(p);
     card.innerHTML = h;
     if (S.line < 0 || S.shown.indexOf(S.line) < 0) S.line = S.shown.length ? S.shown[0] : -1;
@@ -1448,6 +1465,7 @@
     if (on) { e.preventDefault(); return filterOnly(on.getAttribute("data-only"), on.getAttribute("data-facet") || "q"); }
     if (T.onCardClick && T.onCardClick(e)) return;      // the tracker's own buttons and boxes
     if (e.target.closest(".dnote")) { var nl = e.target.closest(".line"); if (nl) setLine(+nl.getAttribute("data-i"), true); return; }
+    if (e.target.closest("[data-showdone]")) { e.preventDefault(); S.pin = S.pipe; renderCard(); return; }
     if (e.target.closest("[data-showall]")) {
       e.preventDefault();
       var keepPipe = S.pipe;
@@ -1941,6 +1959,7 @@
         S[c[1]] = box.checked;
         try { localStorage.setItem(c[2], S[c[1]] ? "1" : "0"); } catch (e) { /* ignore */ }
         renderQueue();
+        if (c[0] === "hide-done") renderCard();      // hide done also drops the decided lines inside the open card
       });
     });
     $("pipes").addEventListener("click", function (e) {

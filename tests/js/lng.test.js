@@ -371,3 +371,25 @@ test("a machine's record is the status line, not a note box", function () {
     assert.match(A.decisionText(l), /^accepted by BL/);
   });
 });
+
+test("hide done drops the decided lines inside the open vessel card, and show them brings them back", function () {
+  var P = page();
+  return P.booted.then(function () {
+    var A = P.app.api, l = lineAt(A, "V1", "Status");
+    l.flags = ["applied"];
+    A.reload({vessels: A.cards(), dirs: ["a"], batches: [], built: "", backend_pulled: "", header: []});
+    var done = lineAt(A, "V1", "Status"), open = lineAt(A, "V1", "Name"), hit = -1;
+    A.cards().forEach(function (p, i) { if (p.pid === "V1") hit = i; });
+    A.S.pipe = hit; A.S.pin = -1;
+    A.S.hideDone = false; A.renderCard();
+    assert.ok(P.$("card").innerHTML.indexOf('id="line-' + done._i + '"') > 0, "hide done off: the decided line shows");
+    A.S.hideDone = true; A.renderCard();
+    var h = P.$("card").innerHTML;
+    assert.equal(h.indexOf('id="line-' + done._i + '"'), -1, "hide done on: the decided line is left out");
+    assert.ok(h.indexOf('id="line-' + open._i + '"') > 0, "the undecided line still shows");
+    assert.match(h, /1 decided change is hidden/);
+    assert.match(h, /data-showdone/);
+    A.S.pin = hit; A.renderCard();
+    assert.ok(P.$("card").innerHTML.indexOf('id="line-' + done._i + '"') > 0, "show them: the decided line is back");
+  });
+});

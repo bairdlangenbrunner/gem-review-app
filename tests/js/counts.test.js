@@ -135,6 +135,24 @@ test("the badge and hide done agree with the count", function () {
   });
 });
 
+test("hide done drops the decided and uncounted lines inside the open card", function () {
+  var P = page(dataset());
+  return P.booted.then(function () {
+    var A = P.app.api;
+    show(P, {decision: ""});
+    A.S.pipe = find(A, "W1"); A.S.pin = -1; A.S.tab = "major";
+    A.S.hideDone = true;
+    A.renderCard();
+    var html = P.$("card").innerHTML, w1 = A.cards()[find(A, "W1")];
+    assert.ok(html.indexOf('id="line-' + w1.lines[0]._i + '"') > 0, "the open line shows");
+    assert.equal(html.indexOf('id="line-' + w1.lines[1]._i + '"'), -1, "the line the backend holds is left out");
+    assert.match(html, /1 decided change is hidden/);
+    A.S.tab = "all";
+    A.renderCard();
+    assert.ok(P.$("card").innerHTML.indexOf('id="line-' + w1.lines[1]._i + '"') > 0, "the everything tab still lists every line");
+  });
+});
+
 test("the tab counts leave out the lines the tracker does not count", function () {
   var P = page(dataset());
   return P.booted.then(function () {
