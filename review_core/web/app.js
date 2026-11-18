@@ -506,6 +506,8 @@
   }
   function selectPipe(i, lineIdx) {
     if (S.pipe !== i) S.igOpen = {};          // item groups collapse again on a new card
+    // a pin (the name link, the everything tab, "show all", "show them") holds only while its card is open: leaving it lets "hide done" drop that card again
+    if (S.pin >= 0 && S.pin !== i) S.pin = -1;
     S.panel = null;
     S.pipe = i;
     S.tab = defaultTab(cards()[i]);
@@ -902,7 +904,7 @@
   function renderCard() {
     var card = $("card");
     if (S.panel && T.cardPanel) { card.innerHTML = T.cardPanel(S.panel); S.shown = []; return; }
-    if (S.pipe < 0) { card.innerHTML = '<div class="empty">' + (S.visible.length && S.hideDone ? "every " + W.card + " in view is done. Turn off \u201chide done\u201d to see them." : "nothing matches the filters.") + "</div>"; S.shown = []; return; }
+    if (S.pipe < 0) { card.innerHTML = '<div class="empty">' + (S.visible.length && S.hideDone ? "Every " + W.card + " in view is done. Turn off \u201chide done\u201d to see them." : "Nothing matches the filters.") + "</div>"; S.shown = []; return; }
     var p = cards()[S.pipe], q = FS.q.trim().toLowerCase();
     var ctx = (T.cardContext ? T.cardContext(p) : [tierSummary(p)])
       .filter(Boolean).map(function (x) { return "<span>" + x + "</span>"; }).join("");
@@ -1744,8 +1746,10 @@
         FS = defaults(); FS.decision = "";
         syncControls(); S.pin = pi; refilter(true);
       }
-      if (pi >= 0 && S.visible.indexOf(pi) >= 0 && S.pipe !== pi) selectPipe(pi);
-      if (pi >= 0 && S.visible.indexOf(pi) >= 0) { S.pipe = pi; renderQueue(); renderCard(); var li = $("pipes").querySelector("li.sel"); if (li) li.scrollIntoView({block: "nearest"}); }
+      // a linked or restored card that "hide done" drops stays closed: refilter has already moved on to the next card or the all-done note
+      var take = pi >= 0 && S.visible.indexOf(pi) >= 0 && !queueHides(pi);
+      if (take && S.pipe !== pi) selectPipe(pi);
+      if (take) { S.pipe = pi; renderQueue(); renderCard(); var li = $("pipes").querySelector("li.sel"); if (li) li.scrollIntoView({block: "nearest"}); }
     } finally { ROUTING = false; }
     writeRoute(true);
   }
@@ -1958,8 +1962,7 @@
       box.addEventListener("change", function () {
         S[c[1]] = box.checked;
         try { localStorage.setItem(c[2], S[c[1]] ? "1" : "0"); } catch (e) { /* ignore */ }
-        renderQueue();
-        if (c[0] === "hide-done") renderCard();      // hide done also drops the decided lines inside the open card
+        refilter();      // the open card moves on when the switch drops it from the queue; hide done also drops the decided lines inside the open card
       });
     });
     $("pipes").addEventListener("click", function (e) {

@@ -135,6 +135,36 @@ test("the badge and hide done agree with the count", function () {
   });
 });
 
+test("a done card pinned by the name link leaves the queue once another card is opened", function () {
+  var P = page(dataset());
+  return P.booted.then(function () {
+    var A = P.app.api, w2 = find(A, "W2");
+    show(P, {decision: ""});
+    A.S.hideDone = true;
+    A.S.pipe = w2; A.S.pin = w2;          // what clicking the card name (or the everything tab) does
+    A.refilter(true);
+    assert.match(P.$("pipes").innerHTML, new RegExp('data-i="' + w2 + '"'), "the pinned card stays while it is open");
+    A.selectPipe(find(A, "W3"));
+    assert.equal(A.S.pin, -1);
+    assert.doesNotMatch(P.$("pipes").innerHTML, new RegExp('data-i="' + w2 + '"'), "hide done drops it once it is left");
+  });
+});
+
+test("a link or a restored route to a done card does not reopen it under hide done", function () {
+  var P = page(dataset());
+  return P.booted.then(function () {
+    var A = P.app.api, w2 = find(A, "W2");
+    A.S.hideDone = true;
+    P.ctx.location.hash = "#/W2?d=any";
+    A.applyRoute();
+    assert.notEqual(A.S.pipe, w2, "the done card is not the open one");
+    assert.doesNotMatch(P.$("card").innerHTML, /widget two/, "its header is not drawn either");
+    A.S.hideDone = false;
+    A.applyRoute();
+    assert.equal(A.S.pipe, w2, "with hide done off the link opens it");
+  });
+});
+
 test("hide done drops the decided and uncounted lines inside the open card", function () {
   var P = page(dataset());
   return P.booted.then(function () {
